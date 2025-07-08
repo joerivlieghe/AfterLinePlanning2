@@ -161,9 +161,10 @@ export function generateTrucks(count: number): Truck[] {
     let customerAdaptationCompleted: boolean = false; // Initialize here
 
     // Decide which types of work to include for this truck
-    const includeDeviation = Math.random() < 0.7; // 70% chance
-    const includeMissingPart = Math.random() < 0.6; // 60% chance
-    const includeCustomerAdaptation = Math.random() < 0.4; // 40% chance
+    // Increased probabilities slightly for more diverse work types
+    const includeDeviation = Math.random() < 0.8; // 80% chance
+    const includeMissingPart = Math.random() < 0.7; // 70% chance
+    const includeCustomerAdaptation = Math.random() < 0.5; // 50% chance
 
     // Generate work items
     if (includeDeviation) {
@@ -191,16 +192,34 @@ export function generateTrucks(count: number): Truck[] {
 
     // Ensure at least one type of work is present for every truck
     if (deviations.length === 0 && missingParts.length === 0 && customerAdaptationWork === null) {
-      // Force a deviation if no work was generated
-      deviations.push({
-        id: `DEV-FORCE-${i}`,
-        description: 'Minor check-up required',
-        severity: 'Low',
-        completed: false,
-        completedBy: null,
-        completedAt: null,
-        timeEstimate: getRandomRepairTime(0.5, 1), // Assign time estimate for forced deviation
-      });
+      const forcedWorkType = getRandomElement(['deviation', 'missingPart', 'customerAdaptation']);
+      if (forcedWorkType === 'deviation') {
+        deviations.push({
+          id: `DEV-FORCE-${i}`,
+          description: 'Minor check-up required',
+          severity: 'Low',
+          completed: false,
+          completedBy: null,
+          completedAt: null,
+          timeEstimate: getRandomRepairTime(0.5, 1),
+        });
+      } else if (forcedWorkType === 'missingPart') {
+        missingParts.push({
+          id: `PART-FORCE-${i}`,
+          name: getRandomElement(['Generic Part A', 'Generic Part B']),
+          status: 'Available', // Make it available so it can be installed
+          promisedDeliveryDate: now,
+          completed: false,
+          completedBy: null,
+          completedAt: null,
+        });
+      } else if (forcedWorkType === 'customerAdaptation') {
+        customerAdaptationWork = getRandomElement([
+          'Basic interior customization',
+          'Minor exterior detailing',
+        ]);
+        customerAdaptationCompleted = false;
+      }
     }
 
     // Calculate individual time estimates based on the FINAL set of generated work
