@@ -12,7 +12,7 @@ interface AppContextType {
   markDeviationComplete: (truckId: string, deviationId: string, completedBy: string) => boolean;
   markMissingPartComplete: (truckId: string, partId: string, completedBy: string) => void;
   markCustomerAdaptationComplete: (truckId: string, completedBy: string) => void;
-  unassignOperatorFromTruck: (truckId: string) => void;
+  unassignOperatorFromTruck: (truckId: string, operatorId: string) => void; // Added operatorId
   assignOperatorToTruck: (truckId: string, operatorId: string) => void;
   markTruckComplete: (truckId: string) => void;
 }
@@ -24,12 +24,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [operators, setOperators] = useState<Operator[]>([]);
 
   useEffect(() => {
-    // Generate initial data
     setTrucks(generateTrucks(200));
     setOperators(generateOperators(12));
   }, []);
 
-  // Memoize and update truck statuses based on current data
   const updatedTrucks = useMemo(() => {
     return trucks.map(truck => {
       let newStatus: TruckStatus = truck.status;
@@ -38,20 +36,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (mp) => mp.status !== 'Available' && !mp.completed
       );
       const isCurrentlyOverdue = isPast(truck.deliveryDate, new Date());
-      const allDeviationsCompleted = truck.deviations.every(dev => dev.completed);
-      const allMissingPartsCompleted = truck.missingParts.every(mp => mp.completed);
       const customerAdaptationWorkExists = truck.customerAdaptationWork !== null;
       const customerAdaptationIsCompleted = truck.customerAdaptationCompleted;
 
       const totalWorkItems = truck.deviations.length + truck.missingParts.length + (customerAdaptationWorkExists ? 1 : 0);
       const completedWorkItems = truck.deviations.filter(d => d.completed).length + truck.missingParts.filter(mp => mp.completed).length + (customerAdaptationWorkExists && customerAdaptationIsCompleted ? 1 : 0);
 
-      // Status determination logic
-      // 1. Completed Status (Only set by markTruckComplete, so not here)
       if (truck.status === 'Completed') {
         newStatus = 'Completed';
       }
-      // 2. Not Ready Statuses (if not completed)
       else if (hasPendingMissingParts) {
         if (isCurrentlyOverdue) {
           newStatus = 'Overdue - Not Ready';
@@ -59,19 +52,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           newStatus = 'Not Ready';
         }
       }
-      // 3. Assigned / Partial / Ready to Finish Statuses (if not completed and ready)
-      else if (truck.assignedOperatorId) {
+      else if (truck.assignedOperatorIds.length > 0) { // Check if any operator is assigned
         if (completedWorkItems === totalWorkItems) {
-          // All individual work items are completed, but truck not manually finished
           newStatus = 'Ready to Finish'; 
         } else if (completedWorkItems > 0) {
           newStatus = 'Partial';
-        } else { // Assigned, but no work items completed yet
+        } else {
           newStatus = 'Assigned';
         }
       }
-      // 4. Ready to Plan Statuses (if not completed, not assigned, and ready)
-      else { // No assigned operator, no pending missing parts, not completed
+      else {
         if (isCurrentlyOverdue) {
           newStatus = 'Overdue - Ready to Plan';
         } else {
@@ -83,13 +73,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, [trucks]);
 
-  // Prioritize trucks that are ready for assignment (Overdue - Ready to Plan, Ready to Plan)
   const prioritizedTrucks = useMemo(() => {
     const readyForAssignment = updatedTrucks.filter(truck => 
-      truck.status === 'Ready to Plan' || truck.status === 'Overdue - Ready to Plan'
+      (truck.status === 'Ready to Plan' || truck.status === 'Overdue - Ready to Plan') &&
+      truck.assignedOperatorIds.length === 0 // Only prioritize trucks with no assigned operators for the wizard
     );
     
-    // Sort by priority score (higher score first)
     return readyForAssignment.sort((a, b) => {
       const scoreA = getPriorityScore(a).totalScore;
       const scoreB = getPriorityScore(b).totalScore;
@@ -101,8 +90,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let success = false;
     setTrucks(prevTrucks => prevTrucks.map(truck => {
       if (truck.id === truckId) {
-        if (!truck.assignedOperatorId) {
-          // Deviation cannot be marked complete without an assigned operator
+        if (truck.assignedOperatorIds.length === 0) { // Check if any operator is assigned
           success = false;
           return truck;
         }
@@ -145,24 +133,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ));
   }, []);
 
-  const unassignOperatorFromTruck = useCallback((truckId: string) => {
-    setTrucks(prevTrucks => prevTrucks.map(truck =>
-      truck.id === truckId
-        ? { ...truck, assignedOperatorId: null, status: 'Pending' } // Reset status to Pending
-        : truck
-    ));
-    setOperators(prevOperators => prevOperators.map(operator => ({
-      ...operator,
-      assignedTrucks: operator.assignedTrucks.filter(t => t.id !== truckId),
-      status: operator.assignedTrucks.filter(t => t.id !== truckId).length === 0 ? 'Available' : operator.status,
-    })));
+  const unassignOperatorFromTruck = useCallback((truckId: string, operatorId: string) => {
+    setTrucks(prevTrucks => prevTrucks.map(truck => {
+      if (truck.id === truckId) {
+        const newAssignedOperatorIds = truck.assignedOperatorIds.filter(id => id !== operatorId);
+        let newStatus = truck.status;
+        if (newAssignedOperatorIds.length === 0) {
+          // If no operators left, revert to Ready to Plan or Overdue - Ready to Plan
+          const isCurrentlyOverdue = isPast(truck.deliveryDate, new Date());
+          newStatus = isCurrentlyOverdue ? 'Overdue - Ready to Plan' : 'Ready to Plan';
+        }
+        return { ...truck, assignedOperatorIds: newAssignedOperatorIds, status: newStatus };
+      }
+      return truck;
+    }));
+
+    setOperators(prevOperators => prevOperators.map(operator => {
+      if (operator.id === operatorId) {
+        const newAssignedTrucks = operator.assignedTrucks.filter(t => t.id !== truckId);
+        return {
+          ...operator,
+          assignedTrucks: newAssignedTrucks,
+          status: newAssignedTrucks.length === 0 ? 'Available' : operator.status,
+        };
+      }
+      return operator;
+    }));
   }, []);
 
   const assignOperatorToTruck = useCallback((truckId: string, operatorId: string) => {
     setTrucks(prevTrucks =>
       prevTrucks.map(truck =>
         truck.id === truckId
-          ? { ...truck, assignedOperatorId: operatorId, status: 'Assigned' }
+          ? {
+              ...truck,
+              assignedOperatorIds: [...new Set([...truck.assignedOperatorIds, operatorId])], // Add operator, ensure uniqueness
+              status: 'Assigned', // Set status to Assigned
+            }
           : truck
       )
     );
@@ -174,9 +181,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ...operator,
               assignedTrucks: [
                 ...operator.assignedTrucks,
-                trucks.find(t => t.id === truckId)!,
+                trucks.find(t => t.id === truckId)!, // Add the truck to the operator's assigned list
               ],
-              status: 'Busy',
+              status: 'Busy', // Operator is now busy
             }
           : operator
       )
@@ -191,21 +198,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const customerAdaptationWorkExists = truck.customerAdaptationWork !== null;
         const customerAdaptationIsCompleted = truck.customerAdaptationCompleted;
 
-        // Check if all conditions for final completion are met
         if (allDeviationsCompleted && allMissingPartsCompleted && (!customerAdaptationWorkExists || customerAdaptationIsCompleted)) {
-          // Unassign operator if any
-          if (truck.assignedOperatorId) {
-            setOperators(prevOperators => prevOperators.map(operator => ({
-              ...operator,
-              assignedTrucks: operator.assignedTrucks.filter(t => t.id !== truckId),
-              status: operator.assignedTrucks.filter(t => t.id !== truckId).length === 0 ? 'Available' : operator.status,
-            })));
-          }
-          return { ...truck, status: 'Completed', assignedOperatorId: null };
+          // Unassign all operators from this truck
+          truck.assignedOperatorIds.forEach(opId => {
+            setOperators(prevOperators => prevOperators.map(operator => {
+              if (operator.id === opId) {
+                const newAssignedTrucks = operator.assignedTrucks.filter(t => t.id !== truckId);
+                return {
+                  ...operator,
+                  assignedTrucks: newAssignedTrucks,
+                  status: newAssignedTrucks.length === 0 ? 'Available' : operator.status,
+                };
+              }
+              return operator;
+            }));
+          });
+          return { ...truck, status: 'Completed', assignedOperatorIds: [] }; // Clear assigned operators
         } else {
-          // If not all conditions met, do not mark complete and potentially show an error/toast
           console.warn(`Cannot mark truck ${truckId} complete: Not all work items are finished.`);
-          return truck; // Return original truck if conditions not met
+          return truck;
         }
       }
       return truck;
@@ -213,7 +224,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const contextValue = useMemo(() => ({
-    trucks: updatedTrucks, // Use updatedTrucks for consistent status
+    trucks: updatedTrucks,
     operators,
     setTrucks,
     setOperators,

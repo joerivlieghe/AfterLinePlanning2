@@ -9,10 +9,11 @@ import {
   MissingPart,
   TruckStatus,
   Shift,
+  ProposedAssignment, // Added ProposedAssignment
 } from '@/types';
 import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds } from 'date-fns';
 
-const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation']; // Added 'Customer Adaptation'
+const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
 const REPAIR_AREAS: RepairArea[] = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6'];
 const MISSING_PART_STATUSES: MissingPartStatus[] = ['Ordered', 'In Transit', 'Available'];
 const OPERATOR_STATUSES: OperatorStatus[] = ['Available', 'Busy', 'On Break', 'Off Duty'];
@@ -109,6 +110,7 @@ function generateMissingParts(guaranteeOne: boolean = false): MissingPart[] {
       completedBy: null,
       completedAt: null,
       promisedDeliveryDate: promisedDeliveryDate,
+      timeEstimate: getRandomRepairTime(0.25, 1), // Time to install this specific part
     });
   }
   return missingParts;
@@ -158,25 +160,22 @@ export function generateTrucks(count: number): Truck[] {
     let deviations: Deviation[] = [];
     let missingParts: MissingPart[] = [];
     let customerAdaptationWork: string | null = null;
-    let customerAdaptationCompleted: boolean = false; // Initialize here
+    let customerAdaptationCompleted: boolean = false;
 
-    // Decide which types of work to include for this truck
-    // Increased probabilities slightly for more diverse work types
-    const includeDeviation = Math.random() < 0.8; // 80% chance
-    const includeMissingPart = Math.random() < 0.7; // 70% chance
-    const includeCustomerAdaptation = Math.random() < 0.5; // 50% chance
+    const includeDeviation = Math.random() < 0.8;
+    const includeMissingPart = Math.random() < 0.7;
+    const includeCustomerAdaptation = Math.random() < 0.5;
 
-    // Generate work items
     if (includeDeviation) {
-      deviations = generateDeviations(true); // Guarantee at least one deviation if chosen
+      deviations = generateDeviations(true);
     } else {
-      deviations = generateDeviations(false); // Allow zero deviations if not chosen as primary work type
+      deviations = generateDeviations(false);
     }
 
     if (includeMissingPart) {
-      missingParts = generateMissingParts(true); // Guarantee at least one missing part if chosen
+      missingParts = generateMissingParts(true);
     } else {
-      missingParts = generateMissingParts(false); // Allow zero missing parts if not chosen as primary work type
+      missingParts = generateMissingParts(false);
     }
 
     if (includeCustomerAdaptation) {
@@ -187,10 +186,9 @@ export function generateTrucks(count: number): Truck[] {
         'Additional safety features',
         'Integrated navigation system upgrade',
       ]);
-      customerAdaptationCompleted = false; // Default to false when work is present
+      customerAdaptationCompleted = false;
     }
 
-    // Ensure at least one type of work is present for every truck
     if (deviations.length === 0 && missingParts.length === 0 && customerAdaptationWork === null) {
       const forcedWorkType = getRandomElement(['deviation', 'missingPart', 'customerAdaptation']);
       if (forcedWorkType === 'deviation') {
@@ -207,11 +205,12 @@ export function generateTrucks(count: number): Truck[] {
         missingParts.push({
           id: `PART-FORCE-${i}`,
           name: getRandomElement(['Generic Part A', 'Generic Part B']),
-          status: 'Available', // Make it available so it can be installed
+          status: 'Available',
           promisedDeliveryDate: now,
           completed: false,
           completedBy: null,
           completedAt: null,
+          timeEstimate: getRandomRepairTime(0.25, 0.5),
         });
       } else if (forcedWorkType === 'customerAdaptation') {
         customerAdaptationWork = getRandomElement([
@@ -222,57 +221,47 @@ export function generateTrucks(count: number): Truck[] {
       }
     }
 
-    // Calculate individual time estimates based on the FINAL set of generated work
     let deviationTimeEstimate: number = 0;
     if (deviations.length > 0) {
       deviationTimeEstimate = deviations.reduce((sum, dev) => sum + (dev.timeEstimate || 0), 0);
     }
 
     let missingPartsTimeEstimate: number = 0;
-    // Only add time if there are pending missing parts or if parts exist and need installation
-    const hasPendingMissingParts = missingParts.some(mp => mp.status !== 'Available' && !mp.completed);
     if (missingParts.length > 0) {
-      if (hasPendingMissingParts) {
-        missingPartsTimeEstimate = getRandomRepairTime(0.25, 1.5); // Time for part arrival + installation
-      } else {
-        // If parts exist but are all available, still assign a small time for installation
-        missingPartsTimeEstimate = getRandomRepairTime(0.25, 0.5);
-      }
+      missingPartsTimeEstimate = missingParts.reduce((sum, part) => sum + (part.timeEstimate || 0), 0);
     }
 
     let customerAdaptationTimeEstimate: number = 0;
     if (customerAdaptationWork) {
-      customerAdaptationTimeEstimate = getRandomRepairTime(0.5, 2.5); // Keep CA time low
+      customerAdaptationTimeEstimate = getRandomRepairTime(0.5, 2.5);
     }
 
-    // Calculate total repair time
     const repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate + customerAdaptationTimeEstimate;
     const repairType = inferRepairType(deviations, missingParts, customerAdaptationWork);
 
-    // Generate delivery dates: some overdue, some soon, some far
     let deliveryDate: Date;
     const rand = Math.random();
-    if (rand < 0.15) { // 15% overdue
+    if (rand < 0.15) {
       deliveryDate = getRandomDate(addDays(now, -30), addDays(now, -1));
-    } else if (rand < 0.45) { // 30% due in next 7 days
+    } else if (rand < 0.45) {
       deliveryDate = getRandomDate(addDays(now, 1), addDays(now, 7));
-    } else { // 55% due later
+    } else {
       deliveryDate = getRandomDate(addDays(now, 8), addDays(now, 60));
     }
 
     const customerPriority = getRandomElement(CUSTOMER_PRIORITIES);
 
-    let status: TruckStatus = 'Pending'; // Default status
+    let status: TruckStatus = 'Pending';
 
     trucks.push({
       id: `TRUCK-${i + 1}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      chassisNumber: `BB-${chassisCounter++}`, // New chassis number format
+      chassisNumber: `BB-${chassisCounter++}`,
       deviations: deviations,
       missingParts: missingParts,
       customerAdaptationWork: customerAdaptationWork,
       customerAdaptationTimeEstimate: customerAdaptationTimeEstimate,
-      customerAdaptationCompleted: customerAdaptationCompleted, // Use the initialized/updated value
-      okToDrive: Math.random() > 0.3, // 70% chance to be OK to drive
+      customerAdaptationCompleted: customerAdaptationCompleted,
+      okToDrive: Math.random() > 0.3,
       repairTimeEstimate: repairTimeEstimate,
       deviationTimeEstimate: deviationTimeEstimate,
       missingPartsTimeEstimate: missingPartsTimeEstimate,
@@ -280,15 +269,13 @@ export function generateTrucks(count: number): Truck[] {
       repairAreaNeeded: getRandomElement(REPAIR_AREAS),
       deliveryDate: deliveryDate,
       customerPriority: customerPriority as Truck['customerPriority'],
-      assignedOperatorId: null, // Initially no assigned operator
-      status: status, // Will be updated by AppContext based on parts/overdue
+      assignedOperatorIds: [], // Initialize as empty array
+      status: status,
     });
   }
 
-  // Adjust critical priority trucks to be fewer (approx 5%)
   const criticalTrucksCount = Math.floor(count * 0.05);
   
-  // Reset existing critical trucks to medium/high if they exceed the new count
   let currentCriticalCount = trucks.filter(t => t.customerPriority === 'Critical').length;
   while (currentCriticalCount > criticalTrucksCount) {
     const truckToDemote = getRandomElement(trucks.filter(t => t.customerPriority === 'Critical'));
@@ -298,49 +285,44 @@ export function generateTrucks(count: number): Truck[] {
     }
   }
 
-  // Promote non-critical trucks to critical until the target count is met
   let promotedCount = 0;
   for (let i = 0; i < trucks.length && promotedCount < criticalTrucksCount; i++) {
     const truck = trucks[i];
     if (truck.customerPriority !== 'Critical' && truck.status !== 'Completed') {
       truck.customerPriority = 'Critical';
-      truck.deliveryDate = addDays(now, getRandomNumber(1, 3)); // Very soon
+      truck.deliveryDate = addDays(now, getRandomNumber(1, 3));
       
-      // Ensure critical trucks have work if they don't already
       const hasWork = truck.deviations.length > 0 || truck.missingParts.length > 0 || truck.customerAdaptationWork !== null;
       if (!hasWork) {
-        // Add a high severity deviation if no work exists
         const newDeviationTime = getRandomRepairTime(4, 8);
         truck.deviations.push({ id: `DEV-CRIT-${i}`, description: 'Critical system malfunction', severity: 'High', completed: false, completedBy: null, completedAt: null, timeEstimate: newDeviationTime });
-        truck.deviationTimeEstimate = (truck.deviationTimeEstimate || 0) + newDeviationTime; // Add to existing sum
+        truck.deviationTimeEstimate = (truck.deviationTimeEstimate || 0) + newDeviationTime;
       } else {
-        // If work exists, ensure repair time is substantial
-        // Distribute the increase across existing work types
         if (truck.deviations.length > 0) {
-          // Increase individual deviation times and sum them up
           truck.deviations.forEach(dev => {
             dev.timeEstimate = Math.max(dev.timeEstimate || 0, getRandomRepairTime(2, 4));
           });
           truck.deviationTimeEstimate = truck.deviations.reduce((sum, dev) => sum + (dev.timeEstimate || 0), 0);
         }
         if (truck.missingParts.length > 0) {
-          truck.missingPartsTimeEstimate = Math.max(truck.missingPartsTimeEstimate || 0, getRandomRepairTime(1, 3));
+          truck.missingParts.forEach(mp => {
+            mp.timeEstimate = Math.max(mp.timeEstimate || 0, getRandomRepairTime(1, 3));
+          });
+          truck.missingPartsTimeEstimate = truck.missingParts.reduce((sum, mp) => sum + (mp.timeEstimate || 0), 0);
         }
         if (truck.customerAdaptationWork !== null) {
           truck.customerAdaptationTimeEstimate = Math.max(truck.customerAdaptationTimeEstimate || 0, getRandomRepairTime(2, 4));
         }
       }
-      // Recalculate total repair time after individual estimates are potentially updated
       truck.repairTimeEstimate = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
       truck.repairType = inferRepairType(truck.deviations, truck.missingParts, truck.customerAdaptationWork);
       
-      truck.assignedOperatorId = null;
+      truck.assignedOperatorIds = []; // Still empty initially, wizard will assign
       truck.status = 'Pending';
       promotedCount++;
     }
   }
 
-  // Ensure some trucks have missing parts that are not available
   for (let i = 0; i < Math.min(5, count / 10); i++) {
     const truck = getRandomElement(trucks.filter(t => t.status !== 'Completed' && t.missingParts.every(mp => mp.status === 'Available')));
     if (truck) {
@@ -352,11 +334,11 @@ export function generateTrucks(count: number): Truck[] {
         completed: false,
         completedBy: null,
         completedAt: null,
+        timeEstimate: getRandomRepairTime(0.25, 1),
       });
-      // Ensure missing parts time estimate is updated for this truck
-      truck.missingPartsTimeEstimate = (truck.missingPartsTimeEstimate || 0) + getRandomRepairTime(0.25, 1.5);
+      truck.missingPartsTimeEstimate = (truck.missingPartsTimeEstimate || 0) + (truck.missingParts[truck.missingParts.length - 1].timeEstimate || 0);
       truck.repairTimeEstimate = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
-      truck.status = 'Pending'; // Will be categorized as 'Missing Parts Not Available'
+      truck.status = 'Pending';
     }
   }
 
@@ -376,7 +358,6 @@ export function generateOperators(count: number): Operator[] {
     "Zack Taylor", "Anna Lee", "Ben Carter", "Chloe King", "David Green"
   ];
 
-  // Shuffle names and pick unique ones
   const shuffledNames = [...allOperatorNames].sort(() => 0.5 - Math.random());
   const uniqueNames = shuffledNames.slice(0, Math.min(count, shuffledNames.length));
 
@@ -386,11 +367,11 @@ export function generateOperators(count: number): Operator[] {
     let shiftEndTime: Date;
 
     if (shiftType === 'Early') {
-      shiftStartTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 6), 0), 0), 0); // 06:00:00
-      shiftEndTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 14), 0), 0), 0); // 14:00:00
-    } else { // Late Shift
-      shiftStartTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 14), 0), 0), 0); // 14:00:00
-      shiftEndTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 22), 0), 0), 0); // 22:00:00
+      shiftStartTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 6), 0), 0), 0);
+      shiftEndTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 14), 0), 0), 0);
+    } else {
+      shiftStartTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 14), 0), 0), 0);
+      shiftEndTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 22), 0), 0), 0);
     }
 
     const competencies: RepairType[] = [];
@@ -402,14 +383,14 @@ export function generateOperators(count: number): Operator[] {
 
     const operator: Operator = {
       id: `OP-${i + 1}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      name: uniqueNames[i] || `Operator ${i + 1}`, // Use unique name, fallback if count > uniqueNames.length
+      name: uniqueNames[i] || `Operator ${i + 1}`,
       competencies: competencies,
-      status: 'Available', // All operators initially available
+      status: 'Available',
       shiftStartTime: shiftStartTime,
       shiftEndTime: shiftEndTime,
-      shift: shiftType, // Assign shift type
-      assignedTrucks: [], // No assigned trucks initially
-      efficiency: parseFloat((Math.random() * (1.0 - 0.7) + 0.7).toFixed(2)), // 0.7 to 1.0
+      shift: shiftType,
+      assignedTrucks: [],
+      efficiency: parseFloat((Math.random() * (1.0 - 0.7) + 0.7).toFixed(2)),
     };
     operators.push(operator);
   }
@@ -440,42 +421,34 @@ export function getPriorityScore(truck: Truck): PriorityBreakdown {
     repairTimeEstimatePenalty: 0,
   };
 
-  // Check for pending missing parts first
   const pendingMissingParts = truck.missingParts.filter(
     (mp) => mp.status !== 'Available' && !mp.completed
   );
 
   if (pendingMissingParts.length > 0) {
-    // If there are any pending missing parts, this truck is NOT ready for planning.
-    // Assign a very low score to ensure it's at the bottom of the priority list.
-    // This effectively means it's "not yet ready to be planned for repair."
-    // We return a score of 0 and a breakdown reflecting this.
     return {
       ...breakdown,
       totalScore: 0,
-      missingPartsAvailability: -100, // Indicate a strong penalty
+      missingPartsAvailability: -100,
     };
   }
 
-  // If all parts are available (or no parts are missing), proceed with normal scoring
-  // 1. Delivery Date (Primary factor, Max 100 points + Overdue bonus)
   const daysUntilDelivery = differenceInDays(truck.deliveryDate, now);
-  if (isPast(truck.deliveryDate, now)) { // Overdue
-    breakdown.deliveryDate = 100 + Math.min(50, Math.abs(daysUntilDelivery) * 5); // Bonus for how long it's overdue (max +50)
-  } else if (daysUntilDelivery <= 0) { // Due today
+  if (isPast(truck.deliveryDate, now)) {
+    breakdown.deliveryDate = 100 + Math.min(50, Math.abs(daysUntilDelivery) * 5);
+  } else if (daysUntilDelivery <= 0) {
     breakdown.deliveryDate = 100;
-  } else if (daysUntilDelivery === 1) { // Due tomorrow
+  } else if (daysUntilDelivery === 1) {
     breakdown.deliveryDate = 90;
-  } else if (daysUntilDelivery <= 3) { // Due in 2-3 days
+  } else if (daysUntilDelivery <= 3) {
     breakdown.deliveryDate = 70;
-  } else if (daysUntilDelivery <= 7) { // Due in 4-7 days
+  } else if (daysUntilDelivery <= 7) {
     breakdown.deliveryDate = 50;
-  } else { // Further dates, decreasing score
-    breakdown.deliveryDate = Math.max(0, 30 - (daysUntilDelivery - 7) * 1); // More aggressive drop
+  } else {
+    breakdown.deliveryDate = Math.max(0, 30 - (daysUntilDelivery - 7) * 1);
   }
   score += breakdown.deliveryDate;
 
-  // 2. Customer Priority (Secondary factor, Max 50 points)
   switch (truck.customerPriority) {
     case 'Critical':
       breakdown.customerPriority = 50;
@@ -492,14 +465,11 @@ export function getPriorityScore(truck: Truck): PriorityBreakdown {
   }
   score += breakdown.customerPriority;
 
-  // 3. Missing Parts Availability (Bonus for all available, already handled by early exit)
-  // If we reach here, all parts are available. Add a significant bonus.
   if (truck.missingParts.length > 0 && pendingMissingParts.length === 0) {
-    breakdown.missingPartsAvailability = 20; // Strong bonus for having all parts available
+    breakdown.missingPartsAvailability = 20;
   }
   score += breakdown.missingPartsAvailability;
 
-  // 4. Deviations (Max 10 points per High, up to 20 points total)
   truck.deviations.filter(dev => !dev.completed).forEach((dev) => {
     switch (dev.severity) {
       case 'High':
@@ -515,26 +485,20 @@ export function getPriorityScore(truck: Truck): PriorityBreakdown {
   });
   score += breakdown.deviations;
 
-  // 5. Customer Adaptation Work (Max 5 points)
   if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
     breakdown.customerAdaptationWork = 5;
   }
   score += breakdown.customerAdaptationWork;
 
-  // 6. OK to Drive (Max 5 points) - if not OK, slight priority increase as it might be blocking
   if (!truck.okToDrive) {
     breakdown.okToDrive = 5;
   }
   score += breakdown.okToDrive;
 
-  // 7. Repair Time Estimate (Penalty, Max -10 points)
-  // Scale 0-24 hours to 0-10 penalty
-  // Consider both repairTimeEstimate and customerAdaptationTimeEstimate for penalty
-  const totalEstimatedWorkTime = truck.repairTimeEstimate; // repairTimeEstimate is now the total
+  const totalEstimatedWorkTime = truck.repairTimeEstimate;
   breakdown.repairTimeEstimatePenalty = -Math.min(10, (totalEstimatedWorkTime / 24) * 10);
   score += breakdown.repairTimeEstimatePenalty;
 
-  // Ensure total score is within 0-200 range
   const totalScore = Math.max(0, Math.min(200, Math.round(score)));
 
   return {
@@ -547,16 +511,13 @@ export function getAvailableShiftHours(operator: Operator): number {
   const now = new Date();
   const shiftEnd = operator.shiftEndTime;
 
-  // If shift has already ended or operator is off duty/on break, no available hours
   if (isBefore(shiftEnd, now) || operator.status === 'Off Duty' || operator.status === 'On Break') {
     return 0;
   }
 
-  // Calculate remaining time in current shift
   const remainingTimeMs = shiftEnd.getTime() - now.getTime();
   const remainingHours = remainingTimeMs / (1000 * 60 * 60);
 
-  // Subtract time for already assigned trucks, including customer adaptation time
   const assignedWorkload = operator.assignedTrucks.reduce((sum, truck) => 
     sum + truck.repairTimeEstimate
   , 0);
@@ -605,13 +566,13 @@ export function getStatusColor(status: Truck['status'] | Operator['status']): st
 
 export function getPriorityColor(score: number): string {
   if (score >= 150) {
-    return 'bg-red-500 text-white'; // Critical
+    return 'bg-red-500 text-white';
   } else if (score >= 100) {
-    return 'bg-orange-500 text-white'; // High
+    return 'bg-orange-500 text-white';
   } else if (score >= 50) {
-    return 'bg-yellow-500 text-black'; // Medium
+    return 'bg-yellow-500 text-black';
   } else {
-    return 'bg-green-500 text-white'; // Low
+    return 'bg-green-500 text-white';
   }
 }
 

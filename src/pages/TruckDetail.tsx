@@ -7,28 +7,34 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime } from '@/lib/data';
-import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon } from 'lucide-react';
-import { Deviation, MissingPart } from '@/types';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'; // Import Table components
+import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime, getAvailableShiftHours } from '@/lib/data';
+import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon } from 'lucide-react';
+import { Deviation, MissingPart, Operator, RepairType } from '@/types';
 import { useToast } from '@/hooks/use-toast';
+// Removed OperatorCard import as it's no longer used for assignment dialog
 
 const TruckDetail: React.FC = () => {
   const { truckId } = useParams<{ truckId: string }>();
   const navigate = useNavigate();
-  const { trucks, operators, markDeviationComplete, markMissingPartComplete, unassignOperatorFromTruck, assignOperatorToTruck, markTruckComplete } = useAppContext();
-  const { toast } = useToast(); // Moved useToast to the top
+  const { trucks, operators, markDeviationComplete, markMissingPartComplete, unassignOperatorFromTruck, assignOperatorToTruck, markTruckComplete, markCustomerAdaptationComplete } = useAppContext();
+  const { toast } = useToast();
 
-  // All other hooks must also be called unconditionally at the top level
   const truck = useMemo(() => trucks.find((t) => t.id === truckId), [trucks, truckId]);
-  const assignedOperator = useMemo(() => operators.find(op => op.id === truck?.assignedOperatorId), [operators, truck]);
+  const assignedOperators = useMemo(() => 
+    truck?.assignedOperatorIds.map(opId => operators.find(op => op.id === opId)).filter(Boolean) as Operator[] || []
+  , [operators, truck]);
 
   const [showCompletionConfirmation, setShowCompletionConfirmation] = useState(false);
-  const [itemToComplete, setItemToComplete] = useState<{ type: 'deviation' | 'missingPart', id: string } | null>(null);
+  const [itemToComplete, setItemToComplete] = useState<{ type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string } | null>(null);
+  const [selectedCompletingOperatorId, setSelectedCompletingOperatorId] = useState<string | null>(null); // New state for selecting completing operator
+
   const [showAssignOperatorDialog, setShowAssignOperatorDialog] = useState(false);
-  const [selectedOperatorId, setSelectedOperatorId] = useState<string | null>(null);
+  // selectedOperatorId state is no longer needed for the table-based assignment as assignment is direct per row
+  // const [selectedOperatorId, setSelectedOperatorId] = useState<string | null>(null); 
+
   const [showFinishTruckConfirmation, setShowFinishTruckConfirmation] = useState(false);
 
-  // Conditional return after all hooks are called
   if (!truck) {
     return (
       <div className="p-6 text-center text-red-500">
@@ -40,24 +46,27 @@ const TruckDetail: React.FC = () => {
 
   const priorityBreakdown = getPriorityScore(truck);
 
-  const handleMarkComplete = (type: 'deviation' | 'missingPart', id: string) => {
-    if (type === 'deviation' && !assignedOperator) {
+  const handleMarkComplete = (type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string) => {
+    if (assignedOperators.length === 0) {
       toast({
         title: "Action Blocked",
-        description: "Deviations cannot be marked complete without an assigned operator.",
+        description: "Tasks cannot be marked complete without an assigned operator.",
         variant: "destructive",
       });
       return;
     }
     setItemToComplete({ type, id });
+    setSelectedCompletingOperatorId(null); // Reset selection
     setShowCompletionConfirmation(true);
   };
 
   const confirmCompletion = () => {
-    if (itemToComplete) {
-      const userId = assignedOperator ? assignedOperator.name : 'System';
-      if (itemToComplete.type === 'deviation') {
-        const success = markDeviationComplete(truck.id, itemToComplete.id, userId);
+    if (itemToComplete && selectedCompletingOperatorId) {
+      const completedByOperator = operators.find(op => op.id === selectedCompletingOperatorId);
+      const completedByName = completedByOperator ? completedByOperator.name : 'Unknown Operator';
+
+      if (itemToComplete.type === 'deviation' && itemToComplete.id) {
+        const success = markDeviationComplete(truck.id, itemToComplete.id, completedByName);
         if (!success) {
           toast({
             title: "Completion Failed",
@@ -65,23 +74,42 @@ const TruckDetail: React.FC = () => {
             variant: "destructive",
           });
         }
-      } else {
-        markMissingPartComplete(truck.id, itemToComplete.id, userId);
+      } else if (itemToComplete.type === 'missingPart' && itemToComplete.id) {
+        markMissingPartComplete(truck.id, itemToComplete.id, completedByName);
+      } else if (itemToComplete.type === 'customerAdaptation') {
+        markCustomerAdaptationComplete(truck.id, completedByName);
       }
       setShowCompletionConfirmation(false);
       setItemToComplete(null);
+      setSelectedCompletingOperatorId(null);
+    } else {
+      toast({
+        title: "Selection Required",
+        description: "Please select an operator who completed the task.",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleUnassign = () => {
-    unassignOperatorFromTruck(truck.id);
+  const handleUnassignOperator = (operatorId: string) => {
+    unassignOperatorFromTruck(truck.id, operatorId);
+    toast({
+      title: "Operator Unassigned",
+      description: `Operator ${operators.find(op => op.id === operatorId)?.name || 'Unknown'} unassigned from truck ${truck.chassisNumber}.`,
+      variant: "default",
+    });
   };
 
-  const handleAssignOperator = () => {
-    if (selectedOperatorId && truck) {
-      assignOperatorToTruck(truck.id, selectedOperatorId);
+  const handleAssignSpecificOperator = (operatorId: string) => {
+    if (truck) {
+      assignOperatorToTruck(truck.id, operatorId);
+      toast({
+        title: "Operator Assigned",
+        description: `Operator ${operators.find(op => op.id === operatorId)?.name || 'Unknown'} assigned to truck ${truck.chassisNumber}.`,
+        variant: "default",
+      });
       setShowAssignOperatorDialog(false);
-      setSelectedOperatorId(null);
+      // setSelectedOperatorId(null); // No longer needed
     }
   };
 
@@ -99,12 +127,33 @@ const TruckDetail: React.FC = () => {
     navigate('/');
   };
 
-  const availableOperators = useMemo(() =>
-    operators.filter(op => op.status === 'Available' || op.assignedTrucks.length === 0)
-  , [operators]);
+  // Determine required competencies for the current truck
+  const truckRequiredCompetencies = useMemo(() => {
+    const competencies = new Set<RepairType>();
+    if (truck.repairType) {
+      competencies.add(truck.repairType);
+    }
+    if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
+      competencies.add('Customer Adaptation');
+    }
+    // You could add more logic here to infer competencies from deviations/missing parts if needed
+    // For now, we rely on truck.repairType and customerAdaptationWork
+    return Array.from(competencies);
+  }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted]);
+
+  const availableOperators = useMemo(() => {
+    return operators.filter(op => 
+      !truck.assignedOperatorIds.includes(op.id) && // Not already assigned to this truck
+      (op.status === 'Available' || op.assignedTrucks.length === 0) // Only truly available or those with no current assignments
+    ).sort((a, b) => {
+      // Sort by available hours (descending - high to low)
+      const aAvailableHours = getAvailableShiftHours(a);
+      const bAvailableHours = getAvailableShiftHours(b);
+      return bAvailableHours - aAvailableHours;
+    });
+  }, [operators, truck.assignedOperatorIds]);
 
   const isTruckReadyForAssignment =
-    truck.assignedOperatorId === null &&
     truck.status !== 'Completed' &&
     truck.status !== 'Missing Parts Not Available';
 
@@ -185,35 +234,62 @@ const TruckDetail: React.FC = () => {
                   <WrenchIcon className="mr-2 h-4 w-4" /> Customer Adaptation Work:
                 </h3>
                 <p>{truck.customerAdaptationWork}</p>
+                {truck.customerAdaptationTimeEstimate !== undefined && truck.customerAdaptationTimeEstimate > 0 && (
+                  <p className="text-sm text-purple-700 mt-1">
+                    Est. Time: {truck.customerAdaptationTimeEstimate} hrs
+                  </p>
+                )}
+                {!truck.customerAdaptationCompleted && assignedOperators.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 text-green-600 border-green-600 hover:bg-green-50 hover:text-green-700"
+                    onClick={() => handleMarkComplete('customerAdaptation')}
+                  >
+                    <CheckCircleIcon className="mr-2 h-4 w-4" /> Mark Complete
+                  </Button>
+                )}
+                {truck.customerAdaptationCompleted && (
+                  <p className="text-xs text-green-600 mt-1">
+                    Completed by {truck.customerAdaptationCompletedBy} on {formatDate(truck.customerAdaptationCompletedAt!)} {formatTime(truck.customerAdaptationCompletedAt!)}
+                  </p>
+                )}
               </div>
             )}
 
-            {assignedOperator ? (
+            {assignedOperators.length > 0 && (
               <div className="mt-4 p-3 bg-blue-50 rounded-md border border-blue-200 text-blue-800">
-                <h3 className="font-semibold flex items-center mb-1">
-                  <UserIcon className="mr-2 h-4 w-4" /> Assigned Operator:
+                <h3 className="font-semibold flex items-center mb-2">
+                  <UsersIcon className="mr-2 h-4 w-4" /> Assigned Operators:
                 </h3>
-                <p>{assignedOperator.name} (ID: {assignedOperator.id})</p>
-                <p className="text-sm">Competencies: {assignedOperator.competencies.join(', ')}</p>
-                <p className="text-sm">Shift: {formatTime(assignedOperator.shiftStartTime)} - {formatTime(assignedOperator.shiftEndTime)}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700"
-                  onClick={handleUnassign}
-                >
-                  <XCircleIcon className="mr-2 h-4 w-4" /> Unassign Operator
-                </Button>
+                <div className="space-y-2">
+                  {assignedOperators.map(operator => (
+                    <div key={operator.id} className="flex items-center justify-between text-sm">
+                      <span>{operator.name} (ID: {operator.id})</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700"
+                        onClick={() => handleUnassignOperator(operator.id)}
+                      >
+                        <XCircleIcon className="mr-2 h-4 w-4" /> Unassign
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ) : (
-              isTruckReadyForAssignment && (
-                <Button
-                  className="mt-4 w-full"
-                  onClick={() => setShowAssignOperatorDialog(true)}
-                >
-                  <UserPlusIcon className="mr-2 h-4 w-4" /> Assign to Operator
-                </Button>
-              )
+            )}
+
+            {isTruckReadyForAssignment && (
+              <Button
+                className="mt-4 w-full"
+                onClick={() => {
+                  setShowAssignOperatorDialog(true);
+                  // setSelectedOperatorId(null); // No longer needed
+                }}
+              >
+                <UserPlusIcon className="mr-2 h-4 w-4" /> {assignedOperators.length > 0 ? 'Assign Another Operator' : 'Assign to Operator'}
+              </Button>
             )}
 
             {truck.status !== 'Completed' && allWorkCompleted && (
@@ -282,7 +358,7 @@ const TruckDetail: React.FC = () => {
                           </p>
                         )}
                       </div>
-                      {!dev.completed && (
+                      {!dev.completed && assignedOperators.length > 0 && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -307,6 +383,11 @@ const TruckDetail: React.FC = () => {
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-2xl font-semibold text-gray-800 flex items-center">
               <PackageIcon className="mr-3 h-6 w-6 text-blue-600" /> Missing Parts ({truck.missingParts.filter(mp => mp.status !== 'Available' && !mp.completed).length} Pending)
+              {truck.missingPartsTimeEstimate !== undefined && truck.missingPartsTimeEstimate > 0 && (
+                <span className="ml-2 text-base font-normal text-blue-700">
+                  (Est. Total Installation Time: {truck.missingPartsTimeEstimate} hrs)
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -319,6 +400,11 @@ const TruckDetail: React.FC = () => {
                         <p className="text-sm font-medium">
                           {part.name} - <Badge className={getMissingPartStatusColor(part.status)}>{part.status}</Badge>
                         </p>
+                        {part.timeEstimate !== undefined && part.timeEstimate > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Est. Installation Time: {part.timeEstimate} hrs
+                          </p>
+                        )}
                         {part.status !== 'Available' && (
                           <p className="text-xs text-gray-500 mt-1">
                             Est. Delivery: {formatDate(part.promisedDeliveryDate)}
@@ -330,7 +416,7 @@ const TruckDetail: React.FC = () => {
                           </p>
                         )}
                       </div>
-                      {!part.completed && part.status === 'Available' && ( // Only allow marking complete if part is available
+                      {!part.completed && part.status === 'Available' && assignedOperators.length > 0 && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -357,46 +443,115 @@ const TruckDetail: React.FC = () => {
           <DialogHeader>
             <DialogTitle>Confirm Completion</DialogTitle>
             <DialogDescription>
-              Are you sure you want to mark this {itemToComplete?.type === 'deviation' ? 'deviation' : 'missing part'} as completed? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCompletionConfirmation(false)}>Cancel</Button>
-            <Button onClick={confirmCompletion}>Confirm</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Assign Operator Dialog */}
-      <Dialog open={showAssignOperatorDialog} onOpenChange={setShowAssignOperatorDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign Operator to Truck</DialogTitle>
-            <DialogDescription>
-              Select an available operator to assign to this truck.
+              Are you sure you want to mark this {itemToComplete?.type === 'deviation' ? 'deviation' : itemToComplete?.type === 'missingPart' ? 'missing part' : 'customer adaptation work'} as completed? Please select the operator who completed this task.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Select onValueChange={setSelectedOperatorId} value={selectedOperatorId || ''}>
+            <Select onValueChange={setSelectedCompletingOperatorId} value={selectedCompletingOperatorId || ''}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select an operator" />
+                <SelectValue placeholder="Select operator who completed the task" />
               </SelectTrigger>
               <SelectContent>
-                {availableOperators.length > 0 ? (
-                  availableOperators.map((op) => (
+                {assignedOperators.length > 0 ? (
+                  assignedOperators.map((op) => (
                     <SelectItem key={op.id} value={op.id}>
-                      {op.name} ({op.status}) - {op.competencies.join(', ')}
+                      {op.name} ({op.status})
                     </SelectItem>
                   ))
                 ) : (
-                  <SelectItem value="no-operators" disabled>No available operators</SelectItem>
+                  <SelectItem value="no-operators" disabled>No operators assigned to this truck.</SelectItem>
                 )}
               </SelectContent>
             </Select>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAssignOperatorDialog(false); setSelectedOperatorId(null); }}>Cancel</Button>
-            <Button onClick={handleAssignOperator} disabled={!selectedOperatorId || availableOperators.length === 0}>Assign</Button>
+            <Button variant="outline" onClick={() => setShowCompletionConfirmation(false)}>Cancel</Button>
+            <Button onClick={confirmCompletion} disabled={!selectedCompletingOperatorId}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Operator Dialog (Table-based) */}
+      <Dialog open={showAssignOperatorDialog} onOpenChange={setShowAssignOperatorDialog}>
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] flex flex-col"> {/* Increased max-width for table */}
+          <DialogHeader>
+            <DialogTitle>{assignedOperators.length > 0 ? 'Assign Another Operator' : 'Assign Operator to Truck'}</DialogTitle>
+            <DialogDescription>
+              Select an available operator to assign to this truck.
+              {truckRequiredCompetencies.length > 0 && (
+                <p className="text-sm text-gray-700 mt-2">
+                  This truck requires competencies in: <span className="font-semibold">{truckRequiredCompetencies.join(', ')}</span>. Operators with these skills are highlighted.
+                </p>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1 py-4 pr-4">
+            {availableOperators.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Operator Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Competencies</TableHead>
+                    <TableHead>Available Hours</TableHead>
+                    <TableHead className="text-center">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {availableOperators.map((op) => {
+                    const availableHours = getAvailableShiftHours(op);
+                    let hoursColorClass = 'text-gray-700';
+                    if (availableHours >= 6) { // More than 6 hours available
+                      hoursColorClass = 'text-green-600 font-semibold';
+                    } else if (availableHours >= 3) { // Between 3 and 6 hours available
+                      hoursColorClass = 'text-yellow-600 font-semibold';
+                    } else { // Less than 3 hours available
+                      hoursColorClass = 'text-red-600 font-semibold';
+                    }
+
+                    // Check if operator has any of the required competencies for the truck
+                    const hasRequiredCompetency = truckRequiredCompetencies.some(
+                      (requiredComp) => op.competencies.includes(requiredComp)
+                    );
+                    const rowHighlightClass = hasRequiredCompetency ? 'bg-green-50' : '';
+
+                    return (
+                      <TableRow key={op.id} className={rowHighlightClass}>
+                        <TableCell className="font-medium">{op.name}</TableCell>
+                        <TableCell><Badge className={getStatusColor(op.status)}>{op.status}</Badge></TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {op.competencies.map((comp, idx) => (
+                              <Badge key={idx} variant="secondary" className="text-xs px-2 py-0.5">
+                                {comp}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className={hoursColorClass}>{availableHours.toFixed(1)} hrs</span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Button
+                            size="sm"
+                            onClick={() => handleAssignSpecificOperator(op.id)}
+                            disabled={!isTruckReadyForAssignment}
+                          >
+                            Assign
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="col-span-full text-center text-muted-foreground py-8">No available operators not already assigned to this truck.</p>
+            )}
+          </ScrollArea>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => { setShowAssignOperatorDialog(false); /* setSelectedOperatorId(null); */ }}>Cancel</Button>
+            {/* The main Assign button is removed as each row has its own */}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -407,7 +562,7 @@ const TruckDetail: React.FC = () => {
           <DialogHeader>
             <DialogTitle>Confirm Truck Completion</DialogTitle>
             <DialogDescription>
-              Are you sure you want to mark this truck as fully completed? This will set its status to 'Completed' and unassign any operator.
+              Are you sure you want to mark this truck as fully completed? This will set its status to 'Completed' and unassign any operators.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

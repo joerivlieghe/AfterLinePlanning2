@@ -26,7 +26,7 @@ const OperatorSelection: React.FC = () => {
   const [filterCompetency, setFilterCompetency] = useState<RepairType | 'All'>('All');
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
-  const [wizardStep, setWizardStep] = useState(1); // 1: Shift selection, 2: Proposal review
+  const [wizardStep, setWizardStep] = useState(1);
   const [selectedShiftForWizard, setSelectedShiftForWizard] = useState<Shift | null>(null);
   const [proposedAssignments, setProposedAssignments] = useState<ProposedAssignment[]>([]);
 
@@ -36,7 +36,6 @@ const OperatorSelection: React.FC = () => {
       setWizardStep(1);
       setSelectedShiftForWizard(null);
       setProposedAssignments([]);
-      // Clear the state so it doesn't re-open on subsequent visits
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location.state, location.pathname, navigate]);
@@ -67,7 +66,18 @@ const OperatorSelection: React.FC = () => {
       filtered = filtered.filter(operator => operator.competencies.includes(filterCompetency));
     }
 
-    return filtered;
+    // Calculate occupancy rate for sorting and add it to the operator object
+    const operatorsWithOccupancy = filtered.map(operator => {
+      const assignedRepairTime = operator.assignedTrucks.reduce((sum, truck) => sum + truck.repairTimeEstimate, 0);
+      const totalShiftHours = (operator.shiftEndTime.getTime() - operator.shiftStartTime.getTime()) / (1000 * 60 * 60);
+      const occupancyRate = totalShiftHours > 0 ? (assignedRepairTime / totalShiftHours) : 0;
+      return { ...operator, occupancyRate };
+    });
+
+    // Sort by occupancy rate (descending)
+    operatorsWithOccupancy.sort((a, b) => b.occupancyRate - a.occupancyRate);
+
+    return operatorsWithOccupancy;
   }, [operators, searchTerm, filterShift, filterStatus, filterCompetency]);
 
   const startAutoAssignWizard = () => {
@@ -80,46 +90,44 @@ const OperatorSelection: React.FC = () => {
   const generateProposals = () => {
     if (!selectedShiftForWizard) return;
 
-    // Create a mutable map of operators to track their simulated available hours and assigned truck count
     const tempOperators = new Map(operators.map(op => [op.id, {
       ...op,
       simulatedAvailableHours: getAvailableShiftHours(op),
-      simulatedAssignedTrucksCount: 0, // Track trucks assigned in this wizard run
+      simulatedAssignedTrucksCount: op.assignedTrucks.length, // Track existing assignments
     }]));
 
+    // Filter for trucks that are ready for assignment AND have no operators currently assigned
     const unassignedPrioritizedTrucks = [...prioritizedTrucks].filter(truck =>
-      !truck.assignedOperatorId && truck.status !== 'Completed' && truck.status !== 'Ready to Finish' && truck.status !== 'Partial'
+      truck.assignedOperatorIds.length === 0 && // Only consider trucks with no assigned operators for wizard
+      truck.status !== 'Completed' && truck.status !== 'Ready to Finish' && truck.status !== 'Partial'
     );
 
     const newProposals: ProposedAssignment[] = [];
 
-    // Sort trucks by priority score (descending)
     unassignedPrioritizedTrucks.sort((a, b) => getPriorityScore(b).totalScore - getPriorityScore(a).totalScore);
 
     for (const truck of unassignedPrioritizedTrucks) {
-      // Calculate total estimated work time for the truck
-      const totalTruckWorkTime = truck.repairTimeEstimate + (truck.customerAdaptationWork && !truck.customerAdaptationCompleted ? (truck.customerAdaptationTimeEstimate || 0) : 0);
+      const totalTruckWorkTime = truck.repairTimeEstimate; // repairTimeEstimate already includes CA time
 
-      // Find a suitable operator for this truck
       const suitableOperator = Array.from(tempOperators.values())
         .filter(op =>
           op.shift === selectedShiftForWizard &&
-          op.status === 'Available' && // Only consider truly available operators
-          (op.competencies.includes(truck.repairType) || (truck.customerAdaptationWork && op.competencies.includes('Customer Adaptation'))) && // Check for repair type or CA competence
-          op.simulatedAvailableHours >= totalTruckWorkTime && // Use totalTruckWorkTime here
+          op.status === 'Available' &&
+          (op.competencies.includes(truck.repairType) || (truck.customerAdaptationWork && op.competencies.includes('Customer Adaptation'))) &&
+          op.simulatedAvailableHours >= totalTruckWorkTime &&
           op.simulatedAssignedTrucksCount < 3 // Max 3 trucks per operator
         )
-        .sort((a, b) => a.simulatedAvailableHours - b.simulatedAvailableHours) // Prefer operators who will be "filled up" more
-        .find(Boolean); // Get the first one
+        .sort((a, b) => a.simulatedAvailableHours - b.simulatedAvailableHours)
+        .find(Boolean);
 
       if (suitableOperator) {
         const operatorBeforeHours = suitableOperator.simulatedAvailableHours;
-        suitableOperator.simulatedAvailableHours -= totalTruckWorkTime; // Subtract total work time
+        suitableOperator.simulatedAvailableHours -= totalTruckWorkTime;
         suitableOperator.simulatedAssignedTrucksCount++;
 
         newProposals.push({
           truck,
-          operator: suitableOperator, // Use the original operator object for display
+          operator: suitableOperator,
           rejected: false,
           operatorAvailableHoursBefore: operatorBeforeHours,
           operatorAvailableHoursAfter: suitableOperator.simulatedAvailableHours,
@@ -154,15 +162,15 @@ const OperatorSelection: React.FC = () => {
     setSelectedShiftForWizard(null);
   };
 
-  const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation']; // Updated REPAIR_TYPES
+  const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
 
   const totalProposedTrucks = proposedAssignments.filter(p => !p.rejected).length;
   const totalProposedRepairTime = proposedAssignments
     .filter(p => !p.rejected)
-    .reduce((sum, p) => sum + p.truck.repairTimeEstimate + (p.truck.customerAdaptationWork && !p.truck.customerAdaptationCompleted ? (p.truck.customerAdaptationTimeEstimate || 0) : 0), 0); // Sum both repair and CA time
+    .reduce((sum, p) => sum + p.truck.repairTimeEstimate, 0);
 
   return (
-    <div className="p-6">
+    <div className="p-6 flex flex-col h-screen">
       <h1 className="text-3xl font-bold mb-6 text-gray-900">Operator Overview</h1>
       <p className="text-lg text-gray-700 mb-8">Select an operator to view their assigned trucks and manage tasks.</p>
 
@@ -206,7 +214,7 @@ const OperatorSelection: React.FC = () => {
 
         <Select value={filterCompetency} onValueChange={(value: RepairType | 'All') => setFilterCompetency(value)}>
           <SelectTrigger className="w-[180px]">
-            <WrenchIcon className="mr-2 h-4 w-4 text-gray-500" />
+            <WrenchIcon className="mr-2 h-4 w-4" />
             <SelectValue placeholder="Filter by Competency" />
           </SelectTrigger>
           <SelectContent>
@@ -222,14 +230,12 @@ const OperatorSelection: React.FC = () => {
         </Button>
       </div>
 
-      <ScrollArea className="h-[calc(100vh-250px)] pr-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <ScrollArea className="flex-1 pr-4 overflow-y-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredOperators.length > 0 ? (
             filteredOperators.map((operator) => {
               const availableHours = getAvailableShiftHours(operator);
-              const assignedRepairTime = operator.assignedTrucks.reduce((sum, truck) => sum + truck.repairTimeEstimate + (truck.customerAdaptationTimeEstimate || 0), 0);
-              const totalShiftHours = (operator.shiftEndTime.getTime() - operator.shiftStartTime.getTime()) / (1000 * 60 * 60);
-              const occupancyRate = totalShiftHours > 0 ? (assignedRepairTime / totalShiftHours) : 0;
+              const occupancyRate = operator.occupancyRate;
 
               return (
                 <Card
@@ -237,13 +243,13 @@ const OperatorSelection: React.FC = () => {
                   className="cursor-pointer hover:shadow-xl transition-shadow duration-200 bg-white rounded-lg shadow-md overflow-hidden"
                   onClick={() => handleOperatorClick(operator.id)}
                 >
-                  <CardHeader className="p-4 pb-2">
-                    <CardTitle className="text-xl font-semibold flex items-center">
+                  <CardHeader className="p-3 pb-1">
+                    <CardTitle className="text-lg font-semibold flex items-center">
                       <UsersIcon className="mr-2 h-5 w-5 text-primary" /> {operator.name}
                     </CardTitle>
-                    <CardDescription className="text-sm text-gray-600">ID: {operator.id}</CardDescription>
+                    <CardDescription className="text-xs text-gray-600">ID: {operator.id}</CardDescription>
                   </CardHeader>
-                  <CardContent className="p-4 pt-0 space-y-2 text-gray-700">
+                  <CardContent className="p-3 pt-0 space-y-1 text-gray-700">
                     <div className="flex items-center text-sm">
                       <Badge className={getStatusColor(operator.status)}>{operator.status}</Badge>
                       <Badge variant="outline" className="ml-2 text-xs px-2 py-0.5">
@@ -266,7 +272,7 @@ const OperatorSelection: React.FC = () => {
                       <TruckIcon className="mr-2 h-4 w-4 text-muted-foreground" />
                       <span>Assigned Trucks: {operator.assignedTrucks.length}</span>
                     </div>
-                    <div className="mt-3">
+                    <div className="mt-2">
                       <h3 className="font-semibold text-sm mb-1 flex items-center">
                         <WrenchIcon className="mr-2 h-4 w-4" /> Competencies:
                       </h3>
@@ -297,7 +303,7 @@ const OperatorSelection: React.FC = () => {
               {wizardStep === 1 && "Select a shift to run the auto-assignment for."}
               {wizardStep === 2 && "Review the proposed assignments. You can reject individual assignments before confirming."}
             </DialogDescription>
-          </DialogHeader>
+          </DialogHeader> {/* Corrected: Removed duplicate DialogDescription closing tag */}
 
           {wizardStep === 1 && (
             <div className="flex flex-col items-center justify-center py-8 space-y-4">
@@ -320,7 +326,6 @@ const OperatorSelection: React.FC = () => {
 
           {wizardStep === 2 && (
             <>
-              {/* Changed max-h to flex-1 to allow ScrollArea to fill remaining space */}
               <ScrollArea className="flex-1 pr-4">
                 {proposedAssignments.length > 0 ? (
                   <>
@@ -342,7 +347,7 @@ const OperatorSelection: React.FC = () => {
                           <TableRow key={proposal.truck.id} className={proposal.rejected ? 'bg-red-50/50 opacity-70' : ''}>
                             <TableCell className="font-medium">{proposal.truck.chassisNumber}</TableCell>
                             <TableCell>{proposal.truck.repairType}</TableCell>
-                            <TableCell>{(proposal.truck.repairTimeEstimate + (proposal.truck.customerAdaptationWork && !proposal.truck.customerAdaptationCompleted ? (proposal.truck.customerAdaptationTimeEstimate || 0) : 0)).toFixed(2)} hrs</TableCell>
+                            <TableCell>{(proposal.truck.repairTimeEstimate).toFixed(2)} hrs</TableCell>
                             <TableCell>{getPriorityScore(proposal.truck).totalScore}</TableCell>
                             <TableCell>{proposal.operator.name}</TableCell>
                             <TableCell>{proposal.operatorAvailableHoursBefore.toFixed(1)} hrs</TableCell>
