@@ -12,6 +12,7 @@ export interface Deviation {
   completed: boolean;
   completedBy: string | null;
   completedAt: Date | null;
+  timeEstimate?: number; // New field: Estimated time for this specific deviation
 }
 
 export interface MissingPart {

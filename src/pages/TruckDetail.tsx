@@ -10,15 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime } from '@/lib/data';
 import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon } from 'lucide-react';
 import { Deviation, MissingPart } from '@/types';
-import { useToast } from '@/hooks/use-toast'; // Corrected import path
+import { useToast } from '@/hooks/use-toast';
 
 const TruckDetail: React.FC = () => {
   const { truckId } = useParams<{ truckId: string }>();
   const navigate = useNavigate();
   const { trucks, operators, markDeviationComplete, markMissingPartComplete, unassignOperatorFromTruck, assignOperatorToTruck, markTruckComplete } = useAppContext();
-  const { toast } = useToast();
+  const { toast } = useToast(); // Moved useToast to the top
 
-  // All hooks must be called unconditionally at the top level
+  // All other hooks must also be called unconditionally at the top level
   const truck = useMemo(() => trucks.find((t) => t.id === truckId), [trucks, truckId]);
   const assignedOperator = useMemo(() => operators.find(op => op.id === truck?.assignedOperatorId), [operators, truck]);
 
@@ -141,8 +141,26 @@ const TruckDetail: React.FC = () => {
               </div>
               <div className="flex items-center text-base">
                 <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
-                <span>Est. Repair Time: {truck.repairTimeEstimate} hrs</span>
+                <span>Total Est. Repair Time: {truck.repairTimeEstimate} hrs</span>
               </div>
+              {truck.deviationTimeEstimate !== undefined && truck.deviationTimeEstimate > 0 && (
+                <div className="flex items-center text-base text-yellow-700">
+                  <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                  <span>Deviations Est. Time: {truck.deviationTimeEstimate} hrs</span>
+                </div>
+              )}
+              {truck.missingPartsTimeEstimate !== undefined && truck.missingPartsTimeEstimate > 0 && (
+                <div className="flex items-center text-base text-blue-700">
+                  <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                  <span>Missing Parts Est. Time: {truck.missingPartsTimeEstimate} hrs</span>
+                </div>
+              )}
+              {truck.customerAdaptationWork && truck.customerAdaptationTimeEstimate !== undefined && truck.customerAdaptationTimeEstimate > 0 && (
+                <div className="flex items-center text-base text-purple-700">
+                  <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                  <span>CA Work Est. Time: {truck.customerAdaptationTimeEstimate} hrs</span>
+                </div>
+              )}
               <div className="flex items-center text-base">
                 <WrenchIcon className="mr-2 h-5 w-5 text-muted-foreground" />
                 <span>Repair Type: {truck.repairType}</span>
@@ -166,7 +184,7 @@ const TruckDetail: React.FC = () => {
                 <h3 className="font-semibold flex items-center mb-1">
                   <WrenchIcon className="mr-2 h-4 w-4" /> Customer Adaptation Work:
                 </h3>
-                <p>{truck.customerAdaptationWork} {truck.customerAdaptationTimeEstimate !== undefined && `(${truck.customerAdaptationTimeEstimate} hrs)`}</p>
+                <p>{truck.customerAdaptationWork}</p>
               </div>
             )}
 
@@ -253,6 +271,11 @@ const TruckDetail: React.FC = () => {
                         <p className="text-sm font-medium">
                           <span className={getSeverityColor(dev.severity)}>{dev.severity}:</span> {dev.description}
                         </p>
+                        {dev.timeEstimate !== undefined && dev.timeEstimate > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Est. Time: {dev.timeEstimate} hrs
+                          </p>
+                        )}
                         {dev.completed && (
                           <p className="text-xs text-green-600 mt-1">
                             Completed by {dev.completedBy} on {formatDate(dev.completedAt!)} {formatTime(dev.completedAt!)}

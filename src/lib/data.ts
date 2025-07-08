@@ -69,6 +69,7 @@ function generateDeviations(guaranteeOne: boolean = false): Deviation[] {
       completed: false,
       completedBy: null,
       completedAt: null,
+      timeEstimate: getRandomRepairTime(0.5, 2), // Assign time estimate per deviation
     });
   }
   return deviations;
@@ -157,62 +158,78 @@ export function generateTrucks(count: number): Truck[] {
     let deviations: Deviation[] = [];
     let missingParts: MissingPart[] = [];
     let customerAdaptationWork: string | null = null;
-    let customerAdaptationTimeEstimate: number = 0;
+    let customerAdaptationCompleted: boolean = false; // Initialize here
+
+    // Decide which types of work to include for this truck
+    const includeDeviation = Math.random() < 0.7; // 70% chance
+    const includeMissingPart = Math.random() < 0.6; // 60% chance
+    const includeCustomerAdaptation = Math.random() < 0.4; // 40% chance
+
+    // Generate work items
+    if (includeDeviation) {
+      deviations = generateDeviations(true); // Guarantee at least one deviation if chosen
+    } else {
+      deviations = generateDeviations(false); // Allow zero deviations if not chosen as primary work type
+    }
+
+    if (includeMissingPart) {
+      missingParts = generateMissingParts(true); // Guarantee at least one missing part if chosen
+    } else {
+      missingParts = generateMissingParts(false); // Allow zero missing parts if not chosen as primary work type
+    }
+
+    if (includeCustomerAdaptation) {
+      customerAdaptationWork = getRandomElement([
+        'Custom paint job',
+        'Enhanced interior lighting',
+        'Specialized cargo securing system',
+        'Additional safety features',
+        'Integrated navigation system upgrade',
+      ]);
+      customerAdaptationCompleted = false; // Default to false when work is present
+    }
+
+    // Ensure at least one type of work is present for every truck
+    if (deviations.length === 0 && missingParts.length === 0 && customerAdaptationWork === null) {
+      // Force a deviation if no work was generated
+      deviations.push({
+        id: `DEV-FORCE-${i}`,
+        description: 'Minor check-up required',
+        severity: 'Low',
+        completed: false,
+        completedBy: null,
+        completedAt: null,
+        timeEstimate: getRandomRepairTime(0.5, 1), // Assign time estimate for forced deviation
+      });
+    }
+
+    // Calculate individual time estimates based on the FINAL set of generated work
     let deviationTimeEstimate: number = 0;
+    if (deviations.length > 0) {
+      deviationTimeEstimate = deviations.reduce((sum, dev) => sum + (dev.timeEstimate || 0), 0);
+    }
+
     let missingPartsTimeEstimate: number = 0;
-    let repairTimeEstimate: number = 0;
-    let repairType: RepairType = getRandomElement(REPAIR_TYPES.filter(type => type !== 'Customer Adaptation')); // Default type
-
-    // Ensure every truck has at least one type of work
-    const workTypesToGenerate: ('deviation' | 'missingPart' | 'customerAdaptation')[] = [];
-    const initialWorkType = getRandomElement(['deviation', 'missingPart', 'customerAdaptation']);
-    workTypesToGenerate.push(initialWorkType);
-
-    // Optionally add more work types (up to 3 total)
-    if (Math.random() < 0.5) workTypesToGenerate.push(getRandomElement(['deviation', 'missingPart', 'customerAdaptation']));
-    if (Math.random() < 0.3) workTypesToGenerate.push(getRandomElement(['deviation', 'missingPart', 'customerAdaptation']));
-
-    // Ensure unique work types
-    const uniqueWorkTypes = [...new Set(workTypesToGenerate)];
-
-    uniqueWorkTypes.forEach(type => {
-      if (type === 'deviation') {
-        deviations = deviations.concat(generateDeviations(true)); // Guarantee at least one deviation
-        if (deviations.length > 0) {
-          deviationTimeEstimate = getRandomRepairTime(0.5, 2); // Keep deviation time low
-        }
-      } else if (type === 'missingPart') {
-        missingParts = missingParts.concat(generateMissingParts(true)); // Guarantee at least one missing part
-        if (missingParts.length > 0) {
-          missingPartsTimeEstimate = getRandomRepairTime(0.25, 1.5); // Keep missing part time low
-        }
-      } else if (type === 'customerAdaptation') {
-        if (!customerAdaptationWork) { // Only add if not already added
-          customerAdaptationWork = getRandomElement([
-            'Custom paint job',
-            'Enhanced interior lighting',
-            'Specialized cargo securing system',
-            'Additional safety features',
-            'Integrated navigation system upgrade',
-          ]);
-          customerAdaptationTimeEstimate = getRandomRepairTime(0.5, 2.5); // Keep CA time low
-        }
+    // Only add time if there are pending missing parts or if parts exist and need installation
+    const hasPendingMissingParts = missingParts.some(mp => mp.status !== 'Available' && !mp.completed);
+    if (missingParts.length > 0) {
+      if (hasPendingMissingParts) {
+        missingPartsTimeEstimate = getRandomRepairTime(0.25, 1.5); // Time for part arrival + installation
+      } else {
+        // If parts exist but are all available, still assign a small time for installation
+        missingPartsTimeEstimate = getRandomRepairTime(0.25, 0.5);
       }
-    });
+    }
+
+    let customerAdaptationTimeEstimate: number = 0;
+    if (customerAdaptationWork) {
+      customerAdaptationTimeEstimate = getRandomRepairTime(0.5, 2.5); // Keep CA time low
+    }
 
     // Calculate total repair time
-    repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate + customerAdaptationTimeEstimate;
-    repairType = inferRepairType(deviations, missingParts, customerAdaptationWork);
+    const repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate + customerAdaptationTimeEstimate;
+    const repairType = inferRepairType(deviations, missingParts, customerAdaptationWork);
 
-    // If after all this, repairTimeEstimate is still 0 (e.g., if all generated activities were completed, or if the random generation somehow resulted in no actual work),
-    // force at least one small deviation to ensure a non-zero repair time.
-    if (repairTimeEstimate === 0 && deviations.length === 0 && missingParts.length === 0 && customerAdaptationWork === null) {
-        deviations.push({ id: `DEV-FORCE-${i}`, description: 'Minor check-up required', severity: 'Low', completed: false, completedBy: null, completedAt: null });
-        deviationTimeEstimate = getRandomRepairTime(0.25, 0.5); // Very small time
-        repairTimeEstimate = deviationTimeEstimate;
-        repairType = inferRepairType(deviations, missingParts, customerAdaptationWork);
-    }
-    
     // Generate delivery dates: some overdue, some soon, some far
     let deliveryDate: Date;
     const rand = Math.random();
@@ -235,7 +252,7 @@ export function generateTrucks(count: number): Truck[] {
       missingParts: missingParts,
       customerAdaptationWork: customerAdaptationWork,
       customerAdaptationTimeEstimate: customerAdaptationTimeEstimate,
-      customerAdaptationCompleted: false, // Default to false
+      customerAdaptationCompleted: customerAdaptationCompleted, // Use the initialized/updated value
       okToDrive: Math.random() > 0.3, // 70% chance to be OK to drive
       repairTimeEstimate: repairTimeEstimate,
       deviationTimeEstimate: deviationTimeEstimate,
@@ -274,16 +291,29 @@ export function generateTrucks(count: number): Truck[] {
       const hasWork = truck.deviations.length > 0 || truck.missingParts.length > 0 || truck.customerAdaptationWork !== null;
       if (!hasWork) {
         // Add a high severity deviation if no work exists
-        truck.deviations.push({ id: `DEV-CRIT-${i}`, description: 'Critical system malfunction', severity: 'High', completed: false, completedBy: null, completedAt: null });
-        truck.deviationTimeEstimate = getRandomRepairTime(4, 8); // Critical trucks might need more time
-        truck.repairTimeEstimate = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
-        truck.repairType = inferRepairType(truck.deviations, truck.missingParts, truck.customerAdaptationWork);
+        const newDeviationTime = getRandomRepairTime(4, 8);
+        truck.deviations.push({ id: `DEV-CRIT-${i}`, description: 'Critical system malfunction', severity: 'High', completed: false, completedBy: null, completedAt: null, timeEstimate: newDeviationTime });
+        truck.deviationTimeEstimate = (truck.deviationTimeEstimate || 0) + newDeviationTime; // Add to existing sum
       } else {
         // If work exists, ensure repair time is substantial
-        if (truck.repairTimeEstimate < 4) {
-          truck.repairTimeEstimate = getRandomRepairTime(4, 8);
+        // Distribute the increase across existing work types
+        if (truck.deviations.length > 0) {
+          // Increase individual deviation times and sum them up
+          truck.deviations.forEach(dev => {
+            dev.timeEstimate = Math.max(dev.timeEstimate || 0, getRandomRepairTime(2, 4));
+          });
+          truck.deviationTimeEstimate = truck.deviations.reduce((sum, dev) => sum + (dev.timeEstimate || 0), 0);
+        }
+        if (truck.missingParts.length > 0) {
+          truck.missingPartsTimeEstimate = Math.max(truck.missingPartsTimeEstimate || 0, getRandomRepairTime(1, 3));
+        }
+        if (truck.customerAdaptationWork !== null) {
+          truck.customerAdaptationTimeEstimate = Math.max(truck.customerAdaptationTimeEstimate || 0, getRandomRepairTime(2, 4));
         }
       }
+      // Recalculate total repair time after individual estimates are potentially updated
+      truck.repairTimeEstimate = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
+      truck.repairType = inferRepairType(truck.deviations, truck.missingParts, truck.customerAdaptationWork);
       
       truck.assignedOperatorId = null;
       truck.status = 'Pending';
@@ -304,6 +334,9 @@ export function generateTrucks(count: number): Truck[] {
         completedBy: null,
         completedAt: null,
       });
+      // Ensure missing parts time estimate is updated for this truck
+      truck.missingPartsTimeEstimate = (truck.missingPartsTimeEstimate || 0) + getRandomRepairTime(0.25, 1.5);
+      truck.repairTimeEstimate = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
       truck.status = 'Pending'; // Will be categorized as 'Missing Parts Not Available'
     }
   }
