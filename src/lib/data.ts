@@ -9,7 +9,7 @@ import {
   MissingPart,
   TruckStatus,
   Shift,
-  ProposedAssignment, // Added ProposedAssignment
+  ProposedAssignment,
 } from '@/types';
 import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds } from 'date-fns';
 
@@ -28,10 +28,9 @@ function getRandomNumber(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// Generates a random number with quarter-hour increments, ensuring minimum is 0.25
 function getRandomRepairTime(min: number, max: number): number {
-  const actualMin = Math.max(0.25, min); // Ensure minimum is 0.25
-  const range = (max - actualMin) * 4; // Convert to quarter-hour units
+  const actualMin = Math.max(0.25, min);
+  const range = (max - actualMin) * 4;
   const randomQuarters = Math.floor(Math.random() * (range + 1));
   return actualMin + randomQuarters * 0.25;
 }
@@ -46,9 +45,9 @@ function generateDeviations(guaranteeOne: boolean = false): Deviation[] {
   let numDeviations = 0;
 
   if (guaranteeOne) {
-    numDeviations = getRandomNumber(1, 2); // At least one, up to two
+    numDeviations = getRandomNumber(1, 2);
   } else {
-    numDeviations = Math.random() < 0.6 ? getRandomNumber(0, 2) : 0; // 60% chance of 0-2 deviations
+    numDeviations = Math.random() < 0.6 ? getRandomNumber(0, 2) : 0;
   }
 
   for (let i = 0; i < numDeviations; i++) {
@@ -70,7 +69,7 @@ function generateDeviations(guaranteeOne: boolean = false): Deviation[] {
       completed: false,
       completedBy: null,
       completedAt: null,
-      timeEstimate: getRandomRepairTime(0.5, 2), // Assign time estimate per deviation
+      timeEstimate: getRandomRepairTime(0.5, 2),
     });
   }
   return deviations;
@@ -81,16 +80,16 @@ function generateMissingParts(guaranteeOne: boolean = false): MissingPart[] {
   let numMissingParts = 0;
 
   if (guaranteeOne) {
-    numMissingParts = getRandomNumber(1, 2); // At least one, up to two
+    numMissingParts = getRandomNumber(1, 2);
   } else {
-    numMissingParts = Math.random() < 0.5 ? getRandomNumber(0, 2) : 0; // 50% chance of 0-2 missing parts
+    numMissingParts = Math.random() < 0.5 ? getRandomNumber(0, 2) : 0;
   }
 
   for (let i = 0; i < numMissingParts; i++) {
     const status = getRandomElement(MISSING_PART_STATUSES);
     const promisedDeliveryDate = status === 'Available'
-      ? new Date() // Already available
-      : getRandomDate(addDays(new Date(), 1), addDays(new Date(), 14)); // Future date
+      ? new Date()
+      : getRandomDate(addDays(new Date(), 1), addDays(new Date(), 14));
     missingParts.push({
       id: `PART-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
       name: getRandomElement([
@@ -106,11 +105,11 @@ function generateMissingParts(guaranteeOne: boolean = false): MissingPart[] {
         'Exhaust Manifold',
       ]),
       status: status,
-      completed: false, // Initially not completed
+      completed: false,
       completedBy: null,
       completedAt: null,
       promisedDeliveryDate: promisedDeliveryDate,
-      timeEstimate: getRandomRepairTime(0.25, 1), // Time to install this specific part
+      timeEstimate: getRandomRepairTime(0.25, 1),
     });
   }
   return missingParts;
@@ -148,13 +147,13 @@ function inferRepairType(deviations: Deviation[], missingParts: MissingPart[], c
   if (potentialTypes.length > 0) {
     return getRandomElement(potentialTypes);
   }
-  return getRandomElement(REPAIR_TYPES.filter(type => type !== 'Customer Adaptation')); // Fallback if no specific type inferred, exclude CA
+  return getRandomElement(REPAIR_TYPES.filter(type => type !== 'Customer Adaptation'));
 }
 
 export function generateTrucks(count: number): Truck[] {
   const trucks: Truck[] = [];
   const now = new Date();
-  let chassisCounter = 512345; // Starting from BB-512345
+  let chassisCounter = 512345;
 
   for (let i = 0; i < count; i++) {
     let deviations: Deviation[] = [];
@@ -269,13 +268,13 @@ export function generateTrucks(count: number): Truck[] {
       repairAreaNeeded: getRandomElement(REPAIR_AREAS),
       deliveryDate: deliveryDate,
       customerPriority: customerPriority as Truck['customerPriority'],
-      assignedOperatorIds: [], // Initialize as empty array
+      assignedOperatorIds: [],
       status: status,
     });
   }
 
   const criticalTrucksCount = Math.floor(count * 0.05);
-  
+
   let currentCriticalCount = trucks.filter(t => t.customerPriority === 'Critical').length;
   while (currentCriticalCount > criticalTrucksCount) {
     const truckToDemote = getRandomElement(trucks.filter(t => t.customerPriority === 'Critical'));
@@ -291,7 +290,7 @@ export function generateTrucks(count: number): Truck[] {
     if (truck.customerPriority !== 'Critical' && truck.status !== 'Completed') {
       truck.customerPriority = 'Critical';
       truck.deliveryDate = addDays(now, getRandomNumber(1, 3));
-      
+
       const hasWork = truck.deviations.length > 0 || truck.missingParts.length > 0 || truck.customerAdaptationWork !== null;
       if (!hasWork) {
         const newDeviationTime = getRandomRepairTime(4, 8);
@@ -316,8 +315,8 @@ export function generateTrucks(count: number): Truck[] {
       }
       truck.repairTimeEstimate = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
       truck.repairType = inferRepairType(truck.deviations, truck.missingParts, truck.customerAdaptationWork);
-      
-      truck.assignedOperatorIds = []; // Still empty initially, wizard will assign
+
+      truck.assignedOperatorIds = [];
       truck.status = 'Pending';
       promotedCount++;
     }
@@ -507,22 +506,35 @@ export function getPriorityScore(truck: Truck): PriorityBreakdown {
   };
 }
 
-export function getAvailableShiftHours(operator: Operator): number {
-  const now = new Date();
-  const shiftEnd = operator.shiftEndTime;
+export function getAvailableShiftHours(operator: Operator, planningDate: Date = new Date()): number {
+  const shiftStartOnPlanningDate = setMilliseconds(setSeconds(setMinutes(setHours(planningDate, operator.shiftStartTime.getHours()), operator.shiftStartTime.getMinutes()), 0), 0);
+  const shiftEndOnPlanningDate = setMilliseconds(setSeconds(setMinutes(setHours(planningDate, operator.shiftEndTime.getHours()), operator.shiftEndTime.getMinutes()), 0), 0);
 
-  if (isBefore(shiftEnd, now) || operator.status === 'Off Duty' || operator.status === 'On Break') {
+  const now = new Date();
+
+  let totalShiftDurationHours: number;
+
+  if (format(planningDate, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
+    if (isAfter(now, shiftEndOnPlanningDate)) {
+      totalShiftDurationHours = 0;
+    } else if (isBefore(now, shiftStartOnPlanningDate)) {
+      totalShiftDurationHours = (shiftEndOnPlanningDate.getTime() - shiftStartOnPlanningDate.getTime()) / (1000 * 60 * 60);
+    } else {
+      totalShiftDurationHours = (shiftEndOnPlanningDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+    }
+  } else {
+    totalShiftDurationHours = (shiftEndOnPlanningDate.getTime() - shiftStartOnPlanningDate.getTime()) / (1000 * 60 * 60);
+  }
+
+  if (operator.status === 'Off Duty' || operator.status === 'On Break') {
     return 0;
   }
 
-  const remainingTimeMs = shiftEnd.getTime() - now.getTime();
-  const remainingHours = remainingTimeMs / (1000 * 60 * 60);
-
-  const assignedWorkload = operator.assignedTrucks.reduce((sum, truck) => 
+  const assignedWorkload = operator.assignedTrucks.reduce((sum, truck) =>
     sum + truck.repairTimeEstimate
   , 0);
 
-  return Math.max(0, remainingHours - assignedWorkload);
+  return Math.max(0, totalShiftDurationHours - assignedWorkload);
 }
 
 export function getStatusColor(status: Truck['status'] | Operator['status']): string {
@@ -551,10 +563,6 @@ export function getStatusColor(status: Truck['status'] | Operator['status']): st
       return 'bg-indigo-100 text-indigo-800';
     case 'Overdue - Not Ready':
       return 'bg-red-300 text-red-900';
-    case 'Not Ready':
-      return 'bg-gray-300 text-gray-900';
-    case 'Overdue - Ready to Plan':
-      return 'bg-red-400 text-white';
     case 'Ready to Plan':
       return 'bg-blue-400 text-white';
     case 'Ready to Finish':
@@ -614,4 +622,15 @@ export function formatTime(date: Date): string {
 
 export function formatDate(date: Date): string {
   return format(date, 'MMM dd, yyyy');
+}
+
+export function generateNextDays(numDays: number): Date[] {
+  const dates: Date[] = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalize to start of day
+
+  for (let i = 0; i < numDays; i++) {
+    dates.push(addDays(today, i));
+  }
+  return dates;
 }

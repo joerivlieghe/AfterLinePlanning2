@@ -7,12 +7,12 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'; // Import Table components
-import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime, getAvailableShiftHours } from '@/lib/data';
-import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon } from 'lucide-react';
-import { Deviation, MissingPart, Operator, RepairType } from '@/types';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime, getAvailableShiftHours, generateNextDays } from '@/lib/data';
+import { Deviation, MissingPart, Operator, RepairType, Shift } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-// Removed OperatorCard import as it's no longer used for assignment dialog
+import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon } from 'lucide-react';
+import { format, isToday, isTomorrow } from 'date-fns';
 
 const TruckDetail: React.FC = () => {
   const { truckId } = useParams<{ truckId: string }>();
@@ -21,17 +21,17 @@ const TruckDetail: React.FC = () => {
   const { toast } = useToast();
 
   const truck = useMemo(() => trucks.find((t) => t.id === truckId), [trucks, truckId]);
-  const assignedOperators = useMemo(() => 
+  const assignedOperators = useMemo(() =>
     truck?.assignedOperatorIds.map(opId => operators.find(op => op.id === opId)).filter(Boolean) as Operator[] || []
   , [operators, truck]);
 
   const [showCompletionConfirmation, setShowCompletionConfirmation] = useState(false);
   const [itemToComplete, setItemToComplete] = useState<{ type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string } | null>(null);
-  const [selectedCompletingOperatorId, setSelectedCompletingOperatorId] = useState<string | null>(null); // New state for selecting completing operator
+  const [selectedCompletingOperatorId, setSelectedCompletingOperatorId] = useState<string | null>(null);
 
   const [showAssignOperatorDialog, setShowAssignOperatorDialog] = useState(false);
-  // selectedOperatorId state is no longer needed for the table-based assignment as assignment is direct per row
-  // const [selectedOperatorId, setSelectedOperatorId] = useState<string | null>(null); 
+  const [selectedPlanningDate, setSelectedPlanningDate] = useState<Date>(new Date());
+  const [selectedPlanningShift, setSelectedPlanningShift] = useState<Shift>('Early'); // New state for shift selection
 
   const [showFinishTruckConfirmation, setShowFinishTruckConfirmation] = useState(false);
 
@@ -56,7 +56,7 @@ const TruckDetail: React.FC = () => {
       return;
     }
     setItemToComplete({ type, id });
-    setSelectedCompletingOperatorId(null); // Reset selection
+    setSelectedCompletingOperatorId(null);
     setShowCompletionConfirmation(true);
   };
 
@@ -109,7 +109,6 @@ const TruckDetail: React.FC = () => {
         variant: "default",
       });
       setShowAssignOperatorDialog(false);
-      // setSelectedOperatorId(null); // No longer needed
     }
   };
 
@@ -127,7 +126,6 @@ const TruckDetail: React.FC = () => {
     navigate('/');
   };
 
-  // Determine required competencies for the current truck
   const truckRequiredCompetencies = useMemo(() => {
     const competencies = new Set<RepairType>();
     if (truck.repairType) {
@@ -136,22 +134,35 @@ const TruckDetail: React.FC = () => {
     if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
       competencies.add('Customer Adaptation');
     }
-    // You could add more logic here to infer competencies from deviations/missing parts if needed
-    // For now, we rely on truck.repairType and customerAdaptationWork
     return Array.from(competencies);
   }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted]);
 
+  const dayOptions = useMemo(() => {
+    const next7Days = generateNextDays(7);
+    return next7Days.map(date => {
+      let label = format(date, 'EEE, MMM dd');
+      if (isToday(date)) {
+        label = `Today (${label})`;
+      } else if (isTomorrow(date)) {
+        label = `Tomorrow (${label})`;
+      }
+      return { label, value: date.toISOString() };
+    });
+  }, []);
+
   const availableOperators = useMemo(() => {
-    return operators.filter(op => 
-      !truck.assignedOperatorIds.includes(op.id) && // Not already assigned to this truck
-      (op.status === 'Available' || op.assignedTrucks.length === 0) // Only truly available or those with no current assignments
+    const actualPlanningDate = new Date(selectedPlanningDate); // Ensure it's a Date object
+
+    return operators.filter(op =>
+      !truck.assignedOperatorIds.includes(op.id) &&
+      (op.status === 'Available' || op.assignedTrucks.length === 0) &&
+      op.shift === selectedPlanningShift // Filter by selected shift
     ).sort((a, b) => {
-      // Sort by available hours (descending - high to low)
-      const aAvailableHours = getAvailableShiftHours(a);
-      const bAvailableHours = getAvailableShiftHours(b);
+      const aAvailableHours = getAvailableShiftHours(a, actualPlanningDate);
+      const bAvailableHours = getAvailableShiftHours(b, actualPlanningDate);
       return bAvailableHours - aAvailableHours;
     });
-  }, [operators, truck.assignedOperatorIds]);
+  }, [operators, truck.assignedOperatorIds, selectedPlanningDate, selectedPlanningShift]);
 
   const isTruckReadyForAssignment =
     truck.status !== 'Completed' &&
@@ -285,7 +296,8 @@ const TruckDetail: React.FC = () => {
                 className="mt-4 w-full"
                 onClick={() => {
                   setShowAssignOperatorDialog(true);
-                  // setSelectedOperatorId(null); // No longer needed
+                  setSelectedPlanningDate(new Date()); // Reset to today when opening
+                  setSelectedPlanningShift('Early'); // Reset to Early shift
                 }}
               >
                 <UserPlusIcon className="mr-2 h-4 w-4" /> {assignedOperators.length > 0 ? 'Assign Another Operator' : 'Assign to Operator'}
@@ -473,7 +485,7 @@ const TruckDetail: React.FC = () => {
 
       {/* Assign Operator Dialog (Table-based) */}
       <Dialog open={showAssignOperatorDialog} onOpenChange={setShowAssignOperatorDialog}>
-        <DialogContent className="sm:max-w-[900px] max-h-[90vh] flex flex-col"> {/* Increased max-width for table */}
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{assignedOperators.length > 0 ? 'Assign Another Operator' : 'Assign Operator to Truck'}</DialogTitle>
             <DialogDescription>
@@ -484,6 +496,41 @@ const TruckDetail: React.FC = () => {
                 </p>
               )}
             </DialogDescription>
+            <div className="flex items-center space-x-4 mt-3">
+              <div className="flex items-center space-x-2">
+                <span className="text-sm font-medium">Planning Day:</span>
+                <Select
+                  onValueChange={(value) => setSelectedPlanningDate(new Date(value))}
+                  value={selectedPlanningDate.toISOString()}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select a day" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dayOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm font-medium">Shift:</span>
+                <Select
+                  onValueChange={(value: Shift) => setSelectedPlanningShift(value)}
+                  value={selectedPlanningShift}
+                >
+                  <SelectTrigger className="w-[120px]">
+                    <SelectValue placeholder="Select a shift" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Early">Early</SelectItem>
+                    <SelectItem value="Late">Late</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </DialogHeader>
           <ScrollArea className="flex-1 py-4 pr-4">
             {availableOperators.length > 0 ? (
@@ -499,17 +546,16 @@ const TruckDetail: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {availableOperators.map((op) => {
-                    const availableHours = getAvailableShiftHours(op);
+                    const availableHours = getAvailableShiftHours(op, selectedPlanningDate);
                     let hoursColorClass = 'text-gray-700';
-                    if (availableHours >= 6) { // More than 6 hours available
+                    if (availableHours >= 6) {
                       hoursColorClass = 'text-green-600 font-semibold';
-                    } else if (availableHours >= 3) { // Between 3 and 6 hours available
+                    } else if (availableHours >= 3) {
                       hoursColorClass = 'text-yellow-600 font-semibold';
-                    } else { // Less than 3 hours available
+                    } else {
                       hoursColorClass = 'text-red-600 font-semibold';
                     }
 
-                    // Check if operator has any of the required competencies for the truck
                     const hasRequiredCompetency = truckRequiredCompetencies.some(
                       (requiredComp) => op.competencies.includes(requiredComp)
                     );
@@ -546,12 +592,11 @@ const TruckDetail: React.FC = () => {
                 </TableBody>
               </Table>
             ) : (
-              <p className="col-span-full text-center text-muted-foreground py-8">No available operators not already assigned to this truck.</p>
+              <p className="col-span-full text-center text-muted-foreground py-8">No available operators for the selected day and shift not already assigned to this truck.</p>
             )}
           </ScrollArea>
           <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => { setShowAssignOperatorDialog(false); /* setSelectedOperatorId(null); */ }}>Cancel</Button>
-            {/* The main Assign button is removed as each row has its own */}
+            <Button variant="outline" onClick={() => { setShowAssignOperatorDialog(false); }}>Cancel</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
