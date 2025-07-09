@@ -5,7 +5,9 @@ import OperatorView from './pages/OperatorView';
 import TruckDetail from './pages/TruckDetail';
 import Header from './components/layout/Header';
 import TruckSearch from './pages/TruckSearch';
-import OperatorSelection from './pages/OperatorSelection'; // Import the new component
+import OperatorSelection from './pages/OperatorSelection';
+import Reports from './pages/Reports';
+import AlternativeDashboard from './pages/AlternativeDashboard'; // Import the new AlternativeDashboard component
 
 const App: React.FC = () => {
   return (
@@ -14,10 +16,12 @@ const App: React.FC = () => {
       <main className="flex-grow">
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/operators" element={<OperatorSelection />} /> {/* New route for operator overview */}
+          <Route path="/operators" element={<OperatorSelection />} />
           <Route path="/operator/:operatorId" element={<OperatorView />} />
           <Route path="/trucks/:truckId" element={<TruckDetail />} />
           <Route path="/truck-search" element={<TruckSearch />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/alternative-dashboard" element={<AlternativeDashboard />} /> {/* New route for Alternative Dashboard */}
         </Routes>
       </main>
     </div>

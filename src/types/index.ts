@@ -46,6 +46,7 @@ export interface Truck {
   customerPriority: 'Low' | 'Medium' | 'High' | 'Critical';
   assignedOperatorIds: string[]; // Changed to array
   status: TruckStatus;
+  projectCode?: string; // Added projectCode
 }
 
 export interface Operator {

@@ -46,6 +46,12 @@ const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
           <WrenchIcon className="mr-2 h-4 w-4 text-muted-foreground" />
           <span>Repair Type: {truck.repairType}</span>
         </div>
+        {truck.projectCode && (
+          <div className="flex items-center">
+            <InfoIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+            <span>Project Code: {truck.projectCode}</span>
+          </div>
+        )}
         
         {truck.deviationTimeEstimate !== undefined && truck.deviationTimeEstimate > 0 && (
           <div className="flex items-center text-yellow-700">

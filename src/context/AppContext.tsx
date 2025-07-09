@@ -1,18 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Operator, TruckStatus, Deviation, MissingPart } from '@/types';
+import { Truck, Operator, Deviation, MissingPart } from '@/types';
 import { generateTrucks, generateOperators, getPriorityScore } from '@/lib/data';
-import { isPast } from 'date-fns';
 
 interface AppContextType {
   trucks: Truck[];
-  operators: Operator[];
   setTrucks: React.Dispatch<React.SetStateAction<Truck[]>>;
+  operators: Operator[];
   setOperators: React.Dispatch<React.SetStateAction<Operator[]>>;
   prioritizedTrucks: Truck[];
+  allProjectCodes: string[];
   markDeviationComplete: (truckId: string, deviationId: string, completedBy: string) => boolean;
   markMissingPartComplete: (truckId: string, partId: string, completedBy: string) => void;
   markCustomerAdaptationComplete: (truckId: string, completedBy: string) => void;
-  unassignOperatorFromTruck: (truckId: string, operatorId: string) => void; // Added operatorId
+  unassignOperatorFromTruck: (truckId: string, operatorId: string) => void;
   assignOperatorToTruck: (truckId: string, operatorId: string) => void;
   markTruckComplete: (truckId: string) => void;
 }
@@ -24,83 +24,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [operators, setOperators] = useState<Operator[]>([]);
 
   useEffect(() => {
-    setTrucks(generateTrucks(200));
-    setOperators(generateOperators(12));
+    try {
+      // Generate initial data
+      const initialTrucks = generateTrucks(200);
+      const initialOperators = generateOperators(10);
+      console.log('Generated initial trucks:', initialTrucks.length, initialTrucks);
+      console.log('Generated initial operators:', initialOperators.length, initialOperators);
+      setTrucks(initialTrucks);
+      setOperators(initialOperators);
+    } catch (error) {
+      console.error("Error generating initial data in AppProvider:", error);
+      // Depending on the error, you might want to set an error state here
+      // or display a fallback UI. For now, just log it.
+    }
   }, []);
 
-  const updatedTrucks = useMemo(() => {
-    return trucks.map(truck => {
-      let newStatus: TruckStatus = truck.status;
+  const prioritizedTrucks = useMemo(() => {
+    // Filter out trucks that are 'Overdue - Not Ready' or 'Not Ready' as they have 0 priority score
+    const eligibleTrucks = trucks.filter(truck =>
+      truck.status !== 'Overdue - Not Ready' &&
+      truck.status !== 'Not Ready'
+    );
 
-      const hasPendingMissingParts = truck.missingParts.some(
-        (mp) => mp.status !== 'Available' && !mp.completed
-      );
-      const isCurrentlyOverdue = isPast(truck.deliveryDate, new Date());
-      const customerAdaptationWorkExists = truck.customerAdaptationWork !== null;
-      const customerAdaptationIsCompleted = truck.customerAdaptationCompleted;
-
-      const totalWorkItems = truck.deviations.length + truck.missingParts.length + (customerAdaptationWorkExists ? 1 : 0);
-      const completedWorkItems = truck.deviations.filter(d => d.completed).length + truck.missingParts.filter(mp => mp.completed).length + (customerAdaptationWorkExists && customerAdaptationIsCompleted ? 1 : 0);
-
-      if (truck.status === 'Completed') {
-        newStatus = 'Completed';
-      }
-      else if (hasPendingMissingParts) {
-        if (isCurrentlyOverdue) {
-          newStatus = 'Overdue - Not Ready';
-        } else {
-          newStatus = 'Not Ready';
-        }
-      }
-      else if (truck.assignedOperatorIds.length > 0) { // Check if any operator is assigned
-        if (completedWorkItems === totalWorkItems) {
-          newStatus = 'Ready to Finish'; 
-        } else if (completedWorkItems > 0) {
-          newStatus = 'Partial';
-        } else {
-          newStatus = 'Assigned';
-        }
-      }
-      else {
-        if (isCurrentlyOverdue) {
-          newStatus = 'Overdue - Ready to Plan';
-        } else {
-          newStatus = 'Ready to Plan';
-        }
-      }
-
-      return { ...truck, status: newStatus };
+    return [...eligibleTrucks].sort((a, b) => {
+      const scoreA = getPriorityScore(a).totalScore;
+      const scoreB = getPriorityScore(b).totalScore;
+      return scoreB - scoreA; // Sort in descending order of priority
     });
   }, [trucks]);
 
-  const prioritizedTrucks = useMemo(() => {
-    const readyForAssignment = updatedTrucks.filter(truck => 
-      (truck.status === 'Ready to Plan' || truck.status === 'Overdue - Ready to Plan') &&
-      truck.assignedOperatorIds.length === 0 // Only prioritize trucks with no assigned operators for the wizard
-    );
-    
-    return readyForAssignment.sort((a, b) => {
-      const scoreA = getPriorityScore(a).totalScore;
-      const scoreB = getPriorityScore(b).totalScore;
-      return scoreB - scoreA;
+  const allProjectCodes = useMemo(() => {
+    const codes = new Set<string>();
+    trucks.forEach(truck => {
+      if (truck.projectCode) {
+        codes.add(truck.projectCode);
+      }
     });
-  }, [updatedTrucks]);
+    return Array.from(codes).sort();
+  }, [trucks]);
 
-  const markDeviationComplete = useCallback((truckId: string, deviationId: string, completedBy: string): boolean => {
+  const markDeviationComplete = useCallback((truckId: string, deviationId: string, completedBy: string) => {
     let success = false;
     setTrucks(prevTrucks => prevTrucks.map(truck => {
       if (truck.id === truckId) {
-        if (truck.assignedOperatorIds.length === 0) { // Check if any operator is assigned
-          success = false;
-          return truck;
-        }
-        success = true;
-        return {
-          ...truck,
-          deviations: truck.deviations.map(dev =>
-            dev.id === deviationId ? { ...dev, completed: true, completedBy, completedAt: new Date() } : dev
-          ),
-        };
+        const updatedDeviations = truck.deviations.map(dev => {
+          if (dev.id === deviationId && !dev.completed) {
+            success = true;
+            return { ...dev, completed: true, completedAt: new Date(), completedBy };
+          }
+          return dev;
+        });
+        return { ...truck, deviations: updatedDeviations };
       }
       return truck;
     }));
@@ -108,53 +82,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const markMissingPartComplete = useCallback((truckId: string, partId: string, completedBy: string) => {
-    setTrucks(prevTrucks => prevTrucks.map(truck =>
-      truck.id === truckId
-        ? {
-            ...truck,
-            missingParts: truck.missingParts.map(part =>
-              part.id === partId ? { ...part, completed: true, completedBy, completedAt: new Date() } : part
-            ),
-          }
-        : truck
-    ));
-  }, []);
-
-  const markCustomerAdaptationComplete = useCallback((truckId: string, completedBy: string) => {
-    setTrucks(prevTrucks => prevTrucks.map(truck =>
-      truck.id === truckId
-        ? {
-            ...truck,
-            customerAdaptationCompleted: true,
-            customerAdaptationCompletedBy: completedBy,
-            customerAdaptationCompletedAt: new Date(),
-          }
-        : truck
-    ));
-  }, []);
-
-  const unassignOperatorFromTruck = useCallback((truckId: string, operatorId: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
       if (truck.id === truckId) {
-        const newAssignedOperatorIds = truck.assignedOperatorIds.filter(id => id !== operatorId);
-        let newStatus = truck.status;
-        if (newAssignedOperatorIds.length === 0) {
-          // If no operators left, revert to Ready to Plan or Overdue - Ready to Plan
-          const isCurrentlyOverdue = isPast(truck.deliveryDate, new Date());
-          newStatus = isCurrentlyOverdue ? 'Overdue - Ready to Plan' : 'Ready to Plan';
-        }
-        return { ...truck, assignedOperatorIds: newAssignedOperatorIds, status: newStatus };
+        const updatedMissingParts = truck.missingParts.map(part => {
+          if (part.id === partId && !part.completed) {
+            return { ...part, completed: true, completedAt: new Date(), completedBy };
+          }
+          return part;
+        });
+        return { ...truck, missingParts: updatedMissingParts };
       }
       return truck;
     }));
+  }, []);
+
+  const markCustomerAdaptationComplete = useCallback((truckId: string, completedBy: string) => {
+    setTrucks(prevTrucks => prevTrucks.map(truck => {
+      if (truck.id === truckId && truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
+        return { ...truck, customerAdaptationCompleted: true, customerAdaptationCompletedAt: new Date(), customerAdaptationCompletedBy: completedBy };
+      }
+      return truck;
+    }));
+  }, []);
+
+  const unassignOperatorFromTruck = useCallback((truckId: string, operatorId: string) => {
+    setTrucks(prevTrucks => prevTrucks.map(truck =>
+      truck.id === truckId
+        ? { ...truck, assignedOperatorIds: truck.assignedOperatorIds.filter(id => id !== operatorId) }
+        : truck
+    ));
 
     setOperators(prevOperators => prevOperators.map(operator => {
       if (operator.id === operatorId) {
-        const newAssignedTrucks = operator.assignedTrucks.filter(t => t.id !== truckId);
+        const updatedAssignedTrucks = operator.assignedTrucks.filter(truck => truck.id !== truckId);
         return {
           ...operator,
-          assignedTrucks: newAssignedTrucks,
-          status: newAssignedTrucks.length === 0 ? 'Available' : operator.status,
+          assignedTrucks: updatedAssignedTrucks,
+          status: updatedAssignedTrucks.length === 0 ? 'Available' : 'Busy',
         };
       }
       return operator;
@@ -164,78 +128,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const assignOperatorToTruck = useCallback((truckId: string, operatorId: string) => {
     setTrucks(prevTrucks =>
       prevTrucks.map(truck =>
-        truck.id === truckId
-          ? {
-              ...truck,
-              assignedOperatorIds: [...new Set([...truck.assignedOperatorIds, operatorId])], // Add operator, ensure uniqueness
-              status: 'Assigned', // Set status to Assigned
-            }
+        truck.id === truckId && !truck.assignedOperatorIds.includes(operatorId)
+          ? { ...truck, assignedOperatorIds: [...truck.assignedOperatorIds, operatorId], status: 'Assigned' }
           : truck
       )
     );
 
     setOperators(prevOperators =>
-      prevOperators.map(operator =>
-        operator.id === operatorId
-          ? {
+      prevOperators.map(operator => {
+        if (operator.id === operatorId) {
+          const truckToAssign = trucks.find(t => t.id === truckId);
+          if (truckToAssign && !operator.assignedTrucks.some(t => t.id === truckId)) {
+            return {
               ...operator,
-              assignedTrucks: [
-                ...operator.assignedTrucks,
-                trucks.find(t => t.id === truckId)!, // Add the truck to the operator's assigned list
-              ],
-              status: 'Busy', // Operator is now busy
-            }
-          : operator
-      )
+              assignedTrucks: [...operator.assignedTrucks, truckToAssign],
+              status: 'Busy',
+            };
+          }
+        }
+        return operator;
+      })
     );
   }, [trucks]);
 
   const markTruckComplete = useCallback((truckId: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
       if (truck.id === truckId) {
-        const allDeviationsCompleted = truck.deviations.every(dev => dev.completed);
-        const allMissingPartsCompleted = truck.missingParts.every(mp => mp.completed);
-        const customerAdaptationWorkExists = truck.customerAdaptationWork !== null;
-        const customerAdaptationIsCompleted = truck.customerAdaptationCompleted;
-
-        if (allDeviationsCompleted && allMissingPartsCompleted && (!customerAdaptationWorkExists || customerAdaptationIsCompleted)) {
-          // Unassign all operators from this truck
-          truck.assignedOperatorIds.forEach(opId => {
-            setOperators(prevOperators => prevOperators.map(operator => {
-              if (operator.id === opId) {
-                const newAssignedTrucks = operator.assignedTrucks.filter(t => t.id !== truckId);
-                return {
-                  ...operator,
-                  assignedTrucks: newAssignedTrucks,
-                  status: newAssignedTrucks.length === 0 ? 'Available' : operator.status,
-                };
-              }
-              return operator;
-            }));
-          });
-          return { ...truck, status: 'Completed', assignedOperatorIds: [] }; // Clear assigned operators
-        } else {
-          console.warn(`Cannot mark truck ${truckId} complete: Not all work items are finished.`);
-          return truck;
-        }
+        // Unassign all operators from this truck
+        truck.assignedOperatorIds.forEach(operatorId => {
+          setOperators(prevOperators => prevOperators.map(operator => {
+            if (operator.id === operatorId) {
+              const updatedAssignedTrucks = operator.assignedTrucks.filter(t => t.id !== truckId);
+              return {
+                ...operator,
+                assignedTrucks: updatedAssignedTrucks,
+                status: updatedAssignedTrucks.length === 0 ? 'Available' : 'Busy',
+              };
+            }
+            return operator;
+          }));
+        });
+        return { ...truck, status: 'Completed', assignedOperatorIds: [] };
       }
       return truck;
     }));
   }, []);
 
   const contextValue = useMemo(() => ({
-    trucks: updatedTrucks,
-    operators,
+    trucks,
     setTrucks,
+    operators,
     setOperators,
     prioritizedTrucks,
+    allProjectCodes,
     markDeviationComplete,
     markMissingPartComplete,
     markCustomerAdaptationComplete,
     unassignOperatorFromTruck,
     assignOperatorToTruck,
     markTruckComplete,
-  }), [updatedTrucks, operators, setTrucks, setOperators, prioritizedTrucks, markDeviationComplete, markMissingPartComplete, markCustomerAdaptationComplete, unassignOperatorFromTruck, assignOperatorToTruck, markTruckComplete]);
+  }), [
+    trucks,
+    setTrucks,
+    operators,
+    setOperators,
+    prioritizedTrucks,
+    allProjectCodes,
+    markDeviationComplete,
+    markMissingPartComplete,
+    markCustomerAdaptationComplete,
+    unassignOperatorFromTruck,
+    assignOperatorToTruck,
+    markTruckComplete,
+  ]);
 
   return (
     <AppContext.Provider value={contextValue}>

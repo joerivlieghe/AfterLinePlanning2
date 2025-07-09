@@ -237,6 +237,12 @@ const TruckDetail: React.FC = () => {
                 <UserIcon className="mr-2 h-5 w-5 text-muted-foreground" />
                 <span>Customer Priority: <Badge variant="secondary">{truck.customerPriority}</Badge></span>
               </div>
+              {truck.projectCode && (
+                <div className="flex items-center text-base">
+                  <InfoIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                  <span>Project Code: <Badge variant="secondary">{truck.projectCode}</Badge></span>
+                </div>
+              )}
             </div>
 
             {truck.customerAdaptationWork && (
