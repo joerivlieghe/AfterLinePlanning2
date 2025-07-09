@@ -1,232 +1,201 @@
-import React, { useMemo } from 'react';
+import React from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAppContext } from '@/context/AppContext';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Bar } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-} from 'chart.js';
-import { PackageIcon, WrenchIcon, AlertCircleIcon, ClockIcon, TruckIcon, CodeIcon } from 'lucide-react';
 import { calculateRemainingRepairTime } from '@/lib/data';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-);
+import { TruckIcon, WrenchIcon, PackageIcon, AlertCircleIcon, ClockIcon } from 'lucide-react';
 
 const Reports: React.FC = () => {
   const { trucks } = useAppContext();
 
-  const completedTrucks = useMemo(() => trucks.filter(t => t.status === 'Completed'), [trucks]);
-  const inProgressTrucks = useMemo(() => trucks.filter(t => t.status !== 'Completed'), [trucks]);
+  const totalTrucks = trucks.length;
+  const completedTrucks = trucks.filter(truck => truck.status === 'Completed').length;
+  const inProgressTrucks = trucks.filter(truck => truck.status === 'Assigned' || truck.status === 'In Progress').length;
+  const readyToPlanTrucks = trucks.filter(truck => truck.status === 'Ready to Plan').length;
+  const notReadyTrucks = trucks.filter(truck => truck.status === 'Not Ready').length;
+  const overdueTrucks = trucks.filter(truck => truck.status === 'Overdue').length;
 
-  const totalRepairHours = useMemo(() => {
-    let totalDeviationsHours = 0;
-    let totalMissingPartsHours = 0;
-    let totalCustomerAdaptationHours = 0;
-    let totalOverallHours = 0;
+  const totalDeviations = trucks.reduce((sum, truck) => sum + truck.deviations.length, 0);
+  const completedDeviations = trucks.reduce((sum, truck) => sum + truck.deviations.filter(d => d.completed).length, 0);
+  const incompleteDeviations = totalDeviations - completedDeviations;
 
-    inProgressTrucks.forEach(truck => {
-      truck.deviations.forEach(dev => {
-        if (!dev.completed && dev.timeEstimate) {
-          totalDeviationsHours += dev.timeEstimate;
-        }
-      });
-      truck.missingParts.forEach(mp => {
-        if (!mp.completed && mp.timeEstimate) {
-          totalMissingPartsHours += mp.timeEstimate;
-        }
-      });
-      if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted && truck.customerAdaptationTimeEstimate) {
-        totalCustomerAdaptationHours += truck.customerAdaptationTimeEstimate;
-      }
-      totalOverallHours += calculateRemainingRepairTime(truck);
-    });
+  const totalMissingParts = trucks.reduce((sum, truck) => sum + truck.missingParts.length, 0);
+  const completedMissingParts = trucks.reduce((sum, truck) => sum + truck.missingParts.filter(mp => mp.completed).length, 0);
+  const pendingMissingParts = totalMissingParts - completedMissingParts;
+  const backorderedMissingParts = trucks.reduce((sum, truck) => sum + truck.missingParts.filter(mp => mp.status === 'Backordered' && !mp.completed).length, 0);
 
-    return {
-      totalDeviationsHours,
-      totalMissingPartsHours,
-      totalCustomerAdaptationHours,
-      totalOverallHours,
-    };
-  }, [inProgressTrucks]);
+  const totalCustomerAdaptations = trucks.filter(truck => truck.customerAdaptationWork).length;
+  const completedCustomerAdaptations = trucks.filter(truck => truck.customerAdaptationWork && truck.customerAdaptationCompleted).length;
+  const pendingCustomerAdaptations = totalCustomerAdaptations - completedCustomerAdaptations;
 
-  const repairTypeSummary = useMemo(() => {
-    const summary: Record<string, { count: number; hours: number }> = {};
-    inProgressTrucks.forEach(truck => {
-      if (!summary[truck.repairType]) {
-        summary[truck.repairType] = { count: 0, hours: 0 };
-      }
-      summary[truck.repairType].count++;
-      summary[truck.repairType].hours += calculateRemainingRepairTime(truck);
-    });
-    return summary;
-  }, [inProgressTrucks]);
+  const trucksWithOneDeviation = trucks.filter(truck =>
+    truck.deviations.filter(d => !d.completed).length === 1 &&
+    truck.missingParts.filter(mp => !mp.completed).length === 0 &&
+    !truck.customerAdaptationWork
+  ).length;
 
-  const quickMoverTrucks = useMemo(() => {
-    return inProgressTrucks.filter(truck =>
-      truck.deviations.filter(d => !d.completed).length === 1 &&
-      truck.missingParts.filter(mp => !mp.completed).length === 0 &&
-      !truck.customerAdaptationWork
-    );
-  }, [inProgressTrucks]);
+  const projectTrucks = trucks.filter(truck => truck.projectCode !== null).length;
 
-  const projectTrucks = useMemo(() => {
-    return inProgressTrucks.filter(truck => truck.projectCode);
-  }, [inProgressTrucks]);
+  const totalRepairHours = trucks.reduce((sum, truck) => sum + calculateRemainingRepairTime(truck), 0);
 
-  const chartData = {
-    labels: Object.keys(repairTypeSummary),
-    datasets: [
-      {
-        label: 'Number of Trucks',
-        data: Object.values(repairTypeSummary).map(s => s.count),
-        backgroundColor: 'rgba(75, 192, 192, 0.6)',
-        borderColor: 'rgba(75, 192, 192, 1)',
-        borderWidth: 1,
-      },
-      {
-        label: 'Estimated Repair Hours',
-        data: Object.values(repairTypeSummary).map(s => s.hours),
-        backgroundColor: 'rgba(153, 102, 255, 0.6)',
-        borderColor: 'rgba(153, 102, 255, 1)',
-        borderWidth: 1,
-      },
-    ],
-  };
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: true,
-        text: 'Repair Type Summary (In Progress Trucks)',
-      },
-    },
-    scales: {
-      x: {
-        title: {
-          display: true,
-          text: 'Repair Type',
-        },
-      },
-      y: {
-        beginAtZero: true,
-        title: {
-          display: true,
-          text: 'Count / Hours',
-        },
-      },
-    },
-  };
+  const repairTypeSummary = trucks.reduce((acc, truck) => {
+    const type = truck.repairType;
+    acc[type] = (acc[type] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold text-gray-900 mb-6">Operations Report</h1>
+      <h1 className="text-3xl font-bold mb-6 text-gray-900">Operations Report</h1>
+      <p className="text-lg text-gray-700 mb-8">Key performance indicators and summaries of truck operations.</p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        <Card>
+        <Card className="bg-white shadow-lg rounded-lg">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Trucks</CardTitle>
             <TruckIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{trucks.length}</div>
-            <p className="text-xs text-muted-foreground">
-              {inProgressTrucks.length} In Progress, {completedTrucks.length} Completed
-            </p>
+            <div className="text-2xl font-bold">{totalTrucks}</div>
+            <p className="text-xs text-muted-foreground">Overall fleet size</p>
           </CardContent>
         </Card>
-
-        <Card>
+        <Card className="bg-white shadow-lg rounded-lg">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Estimated Work Hours</CardTitle>
+            <CardTitle className="text-sm font-medium">Completed Trucks</CardTitle>
+            <CheckCircleIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{completedTrucks}</div>
+            <p className="text-xs text-muted-foreground">Trucks finished and delivered</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">In Progress Trucks</CardTitle>
             <ClockIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalRepairHours.totalOverallHours.toFixed(1)} hrs</div>
-            <p className="text-xs text-muted-foreground">
-              Deviations: {totalRepairHours.totalDeviationsHours.toFixed(1)} hrs
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Missing Parts: {totalRepairHours.totalMissingPartsHours.toFixed(1)} hrs
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Customer Adaptation: {totalRepairHours.totalCustomerAdaptationHours.toFixed(1)} hrs
-            </p>
+            <div className="text-2xl font-bold">{inProgressTrucks}</div>
+            <p className="text-xs text-muted-foreground">Trucks currently being worked on</p>
           </CardContent>
         </Card>
-
-        <Card>
+        <Card className="bg-white shadow-lg rounded-lg">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Quick Movers (1 Deviation)</CardTitle>
+            <CardTitle className="text-sm font-medium">Ready to Plan</CardTitle>
+            <WrenchIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{readyToPlanTrucks}</div>
+            <p className="text-xs text-muted-foreground">Trucks awaiting assignment</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Not Ready (Parts)</CardTitle>
+            <PackageIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{notReadyTrucks}</div>
+            <p className="text-xs text-muted-foreground">Trucks waiting for missing parts</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Overdue Trucks</CardTitle>
             <AlertCircleIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{quickMoverTrucks.length}</div>
-            <p className="text-xs text-muted-foreground">
-              Trucks with only one deviation and no other work.
-            </p>
+            <div className="text-2xl font-bold text-red-600">{overdueTrucks}</div>
+            <p className="text-xs text-muted-foreground">Trucks past their due date</p>
           </CardContent>
         </Card>
+      </div>
 
-        <Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <Card className="bg-white shadow-lg rounded-lg">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Project Trucks</CardTitle>
-            <CodeIcon className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Incomplete Deviations</CardTitle>
+            <AlertCircleIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{projectTrucks.length}</div>
-            <p className="text-xs text-muted-foreground">
-              Trucks assigned to specific projects.
-            </p>
+            <div className="text-2xl font-bold">{incompleteDeviations}</div>
+            <p className="text-xs text-muted-foreground">Total deviations pending</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pending Missing Parts</CardTitle>
+            <PackageIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{pendingMissingParts}</div>
+            <p className="text-xs text-muted-foreground">Parts not yet available/installed</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Backordered Parts</CardTitle>
+            <PackageIcon className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{backorderedMissingParts}</div>
+            <p className="text-xs text-muted-foreground">Critical parts on backorder</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pending Customer Adaptations</CardTitle>
+            <WrenchIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{pendingCustomerAdaptations}</div>
+            <p className="text-xs text-muted-foreground">Customer-specific work pending</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Trucks with 1 Deviation</CardTitle>
+            <TruckIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{trucksWithOneDeviation}</div>
+            <p className="text-xs text-muted-foreground">Potential "quick wins"</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-white shadow-lg rounded-lg">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Project Trucks</CardTitle>
+            <TruckIcon className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{projectTrucks}</div>
+            <p className="text-xs text-muted-foreground">Trucks part of specific projects</p>
           </CardContent>
         </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="col-span-1">
+        <Card className="bg-white shadow-lg rounded-lg">
           <CardHeader>
-            <CardTitle>Repair Type Breakdown</CardTitle>
+            <CardTitle>Total Remaining Repair Hours</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px]">
-              <Bar data={chartData} options={chartOptions} />
-            </div>
+            <div className="text-4xl font-bold text-blue-600">{totalRepairHours.toFixed(1)} hrs</div>
+            <p className="text-sm text-muted-foreground">Estimated total work remaining across all trucks.</p>
           </CardContent>
         </Card>
 
-        <Card className="col-span-1">
+        <Card className="bg-white shadow-lg rounded-lg">
           <CardHeader>
-            <CardTitle>Detailed Repair Type Summary</CardTitle>
+            <CardTitle>Trucks by Repair Type</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-2">
-              {Object.entries(repairTypeSummary).map(([type, data]) => (
-                <li key={type} className="flex justify-between items-center border-b pb-2 last:border-b-0 last:pb-0">
-                  <span className="font-medium">{type}</span>
-                  <div className="text-right">
-                    <p className="text-sm">{data.count} Trucks</p>
-                    <p className="text-xs text-muted-foreground">{data.hours.toFixed(1)} hrs</p>
-                  </div>
+            <ul className="list-disc pl-5 space-y-1">
+              {Object.entries(repairTypeSummary).map(([type, count]) => (
+                <li key={type} className="text-base">
+                  {type}: <span className="font-semibold">{count}</span> trucks
                 </li>
               ))}
-              {Object.keys(repairTypeSummary).length === 0 && (
-                <p className="text-muted-foreground italic">No in-progress trucks to summarize.</p>
-              )}
             </ul>
           </CardContent>
         </Card>

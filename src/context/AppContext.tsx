@@ -9,23 +9,19 @@ import React, {
 import {
   Truck,
   Operator,
-  TruckStatus,
-  Deviation,
-  MissingPart,
 } from '@/types';
 import {
   generateTrucks,
   generateOperators,
   calculateRemainingRepairTime,
   getPriorityScore,
-  getAvailableShiftHours, // Added getAvailableShiftHours import
+  getAvailableShiftHours,
 } from '@/lib/data';
-import { addDays, isSameDay } from 'date-fns';
 
 interface AppContextType {
   trucks: Truck[];
   operators: Operator[];
-  allProjectCodes: string[]; // Added allProjectCodes to context type
+  allProjectCodes: string[];
   markDeviationComplete: (
     truckId: string,
     deviationId: string,
@@ -72,12 +68,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     });
     return Array.from(codes).sort();
   }, [trucks]);
-
-  const updateTruckStatus = useCallback((updatedTruck: Truck) => {
-    setTrucks((prevTrucks) =>
-      prevTrucks.map((t) => (t.id === updatedTruck.id ? updatedTruck : t))
-    );
-  }, []);
 
   const markDeviationComplete = useCallback(
     (truckId: string, deviationId: string, completedBy: string) => {
@@ -276,8 +266,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         // Find operators already assigned to this truck and account for their remaining time
         const currentlyAssignedOperators = updatedOperators.filter(op => truck.assignedOperatorIds.includes(op.id));
         currentlyAssignedOperators.forEach(op => {
-          const operatorWorkloadOnThisTruck = truck.assignedOperatorIds.filter(id => id === truck.id).length > 0 ? truckRemainingTime : 0; // Simplified: assume all remaining time is for this truck if assigned
           // This logic needs refinement for actual distributed workload
+          // For now, the `operatorWorkloadOnThisTruck` variable is unused as it's complex to simulate here.
+          // const operatorWorkloadOnThisTruck = truck.assignedOperatorIds.filter(id => id === truck.id).length > 0 ? truckRemainingTime : 0;
         });
 
 
@@ -338,7 +329,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     () => ({
       trucks,
       operators,
-      allProjectCodes, // Included allProjectCodes in context value
+      allProjectCodes,
       markDeviationComplete,
       markMissingPartComplete,
       markCustomerAdaptationComplete,
@@ -350,7 +341,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     [
       trucks,
       operators,
-      allProjectCodes, // Added allProjectCodes to dependency array
+      allProjectCodes,
       markDeviationComplete,
       markMissingPartComplete,
       markCustomerAdaptationComplete,
