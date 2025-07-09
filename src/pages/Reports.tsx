@@ -1,9 +1,31 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { BarChart, PieChart, LineChart, PackageXIcon, WrenchIcon, TruckIcon, UsersIcon, ClockIcon, AlertCircleIcon, CheckCircleIcon, UserPlusIcon, ListChecksIcon, HourglassIcon, FolderKanbanIcon } from 'lucide-react'; // Added FolderKanbanIcon
+import { BarChart, PieChart, LineChart, PackageXIcon, WrenchIcon, TruckIcon, UsersIcon, ClockIcon, AlertCircleIcon, CheckCircleIcon, UserPlusIcon, ListChecksIcon, HourglassIcon, FolderKanbanIcon } from 'lucide-react';
 import { getPriorityScore, getStatusColor } from '@/lib/data';
 import { TruckStatus } from '@/types';
+import TruckListDialog from '@/components/dialogs/TruckListDialog';
+import OperatorListDialog from '@/components/dialogs/OperatorListDialog';
+import { Bar } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 interface ReportCardProps {
   title: string;
@@ -11,10 +33,14 @@ interface ReportCardProps {
   description?: string;
   icon?: React.ReactNode;
   className?: string;
+  onClick?: () => void; // Added onClick prop
 }
 
-const ReportCard: React.FC<ReportCardProps> = ({ title, value, description, icon, className }) => (
-  <Card className={`shadow-lg hover:shadow-xl transition-shadow duration-300 ${className}`}>
+const ReportCard: React.FC<ReportCardProps> = ({ title, value, description, icon, className, onClick }) => (
+  <Card
+    className={`shadow-lg hover:shadow-xl transition-shadow duration-300 ${className} ${onClick ? 'cursor-pointer' : ''}`}
+    onClick={onClick}
+  >
     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
       <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
       {icon}
@@ -29,6 +55,16 @@ const ReportCard: React.FC<ReportCardProps> = ({ title, value, description, icon
 const Reports: React.FC = () => {
   const { trucks, operators } = useAppContext();
 
+  // State for dialog visibility
+  const [showCaWorkTrucksDialog, setShowCaWorkTrucksDialog] = useState(false);
+  const [showQuickMoverTrucksDialog, setShowQuickMoverTrucksDialog] = useState(false);
+  const [showOverdueTrucksDialog, setShowOverdueTrucksDialog] = useState(false);
+  const [showPendingPartsTrucksDialog, setShowPendingPartsTrucksDialog] = useState(false);
+  const [showAssignedTrucksDialog, setShowAssignedTrucksDialog] = useState(false);
+  const [showCompletedTrucksDialog, setShowCompletedTrucksDialog] = useState(false);
+  const [showProjectTrucksDialog, setShowProjectTrucksDialog] = useState(false);
+  const [showAvailableOperatorsDialog, setShowAvailableOperatorsDialog] = useState(false);
+
   // KPI 1: Summary on repair type
   const repairTypeSummary = useMemo(() => {
     const summary: { [key: string]: number } = {};
@@ -37,6 +73,48 @@ const Reports: React.FC = () => {
     });
     return summary;
   }, [trucks]);
+
+  const repairTypeChartData = useMemo(() => {
+    return {
+      labels: Object.keys(repairTypeSummary),
+      datasets: [
+        {
+          label: 'Count',
+          data: Object.values(repairTypeSummary),
+          backgroundColor: 'rgba(59, 130, 246, 0.6)', // blue-500
+          borderColor: 'rgba(59, 130, 246, 1)',
+          borderWidth: 1,
+        },
+      ],
+    };
+  }, [repairTypeSummary]);
+
+  const repairTypeChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top' as const,
+      },
+      title: {
+        display: false,
+        text: 'Trucks by Repair Type',
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false,
+        },
+      },
+      y: {
+        beginAtZero: true,
+        ticks: {
+          precision: 0,
+        },
+      },
+    },
+  };
 
   // KPI 2: Number of missing parts per unique missing part
   const missingPartsSummary = useMemo(() => {
@@ -49,15 +127,58 @@ const Reports: React.FC = () => {
     return summary;
   }, [trucks]);
 
+  const missingPartsChartData = useMemo(() => {
+    return {
+      labels: Object.keys(missingPartsSummary),
+      datasets: [
+        {
+          label: 'Count',
+          data: Object.values(missingPartsSummary),
+          backgroundColor: 'rgba(107, 114, 128, 0.6)', // gray-500
+          borderColor: 'rgba(107, 114, 128, 1)',
+          borderWidth: 1,
+        },
+      ],
+    };
+  }, [missingPartsSummary]);
+
+  const missingPartsChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top' as const,
+      },
+      title: {
+        display: false,
+        text: 'Unique Missing Parts Count',
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false,
+        },
+      },
+      y: {
+        beginAtZero: true,
+        ticks: {
+          precision: 0,
+        },
+      },
+    },
+  };
+
   // KPI 3: Number of deviations
   const totalDeviations = useMemo(() => {
     return trucks.reduce((sum, truck) => sum + truck.deviations.length, 0);
   }, [trucks]);
 
   // KPI 4: CA work (Customer Adaptation work)
-  const caWorkTrucks = useMemo(() => {
-    return trucks.filter(truck => truck.customerAdaptationWork !== null).length;
+  const caWorkTrucksList = useMemo(() => {
+    return trucks.filter(truck => truck.customerAdaptationWork !== null);
   }, [trucks]);
+  const caWorkTrucksCount = caWorkTrucksList.length;
 
   // KPI 5: All work in number of hours
   const totalRepairHours = useMemo(() => {
@@ -65,7 +186,7 @@ const Reports: React.FC = () => {
   }, [trucks]);
 
   // KPI 6: All trucks with just 1 deviation (quick movers)
-  const quickMoverTrucks = useMemo(() => {
+  const quickMoverTrucksList = useMemo(() => {
     return trucks.filter(truck =>
       truck.deviations.length === 1 &&
       truck.missingParts.length === 0 &&
@@ -75,8 +196,9 @@ const Reports: React.FC = () => {
       truck.status !== 'In Progress' &&
       truck.status !== 'Partial' &&
       truck.status !== 'Ready to Finish'
-    ).length;
+    );
   }, [trucks]);
+  const quickMoverTrucksCount = quickMoverTrucksList.length;
 
   // Additional KPIs:
 
@@ -97,36 +219,64 @@ const Reports: React.FC = () => {
   }, [trucks]);
 
   // KPI 9: Operators Available
-  const availableOperatorsCount = useMemo(() => {
-    return operators.filter(op => op.status === 'Available').length;
+  const availableOperatorsList = useMemo(() => {
+    return operators.filter(op => op.status === 'Available');
   }, [operators]);
+  const availableOperatorsCount = availableOperatorsList.length;
 
   // KPI 10: Overdue Trucks
-  const overdueTrucksCount = useMemo(() => {
-    return trucks.filter(truck => getPriorityScore(truck).deliveryDate > 100 && truck.status !== 'Completed').length;
+  const overdueTrucksList = useMemo(() => {
+    return trucks.filter(truck => getPriorityScore(truck).deliveryDate > 100 && truck.status !== 'Completed');
   }, [trucks]);
+  const overdueTrucksCount = overdueTrucksList.length;
 
   // KPI 11: Trucks with Pending Missing Parts
-  const trucksWithPendingMissingParts = useMemo(() => {
+  const trucksWithPendingMissingPartsList = useMemo(() => {
     return trucks.filter(truck =>
       truck.missingParts.some(mp => mp.status !== 'Available' && !mp.completed)
-    ).length;
+    );
   }, [trucks]);
+  const trucksWithPendingMissingPartsCount = trucksWithPendingMissingPartsList.length;
 
   // KPI 12: Total Assigned Trucks
-  const totalAssignedTrucks = useMemo(() => {
-    return trucks.filter(truck => truck.status === 'Assigned').length;
+  const assignedTrucksList = useMemo(() => {
+    return trucks.filter(truck => truck.status === 'Assigned');
   }, [trucks]);
+  const totalAssignedTrucks = assignedTrucksList.length;
 
   // KPI 13: Total Completed Trucks
-  const totalCompletedTrucks = useMemo(() => {
-    return trucks.filter(truck => truck.status === 'Completed').length;
+  const completedTrucksList = useMemo(() => {
+    return trucks.filter(truck => truck.status === 'Completed');
   }, [trucks]);
+  const totalCompletedTrucks = completedTrucksList.length;
 
   // KPI 14: Project Trucks
-  const projectTrucksCount = useMemo(() => {
-    return trucks.filter(truck => truck.projectCode !== undefined && truck.projectCode !== null).length;
+  const projectTrucksList = useMemo(() => {
+    return trucks.filter(truck => truck.projectCode !== undefined && truck.projectCode !== null);
   }, [trucks]);
+  const projectTrucksCount = projectTrucksList.length;
+
+  // KPI 15: Total Repair Hours for NOT Completed Trucks (Deviations)
+  const totalUncompletedDeviationHours = useMemo(() => {
+    return trucks.filter(truck => truck.status !== 'Completed')
+                 .reduce((sum, truck) => sum + (truck.deviationTimeEstimate || 0), 0)
+                 .toFixed(1);
+  }, [trucks]);
+
+  // KPI 16: Total Repair Hours for NOT Completed Trucks (Missing Parts)
+  const totalUncompletedMissingPartsHours = useMemo(() => {
+    return trucks.filter(truck => truck.status !== 'Completed')
+                 .reduce((sum, truck) => sum + (truck.missingPartsTimeEstimate || 0), 0)
+                 .toFixed(1);
+  }, [trucks]);
+
+  // KPI 17: Total Repair Hours for NOT Completed Trucks (Customer Adaptation)
+  const totalUncompletedCAHours = useMemo(() => {
+    return trucks.filter(truck => truck.status !== 'Completed')
+                 .reduce((sum, truck) => sum + (truck.customerAdaptationTimeEstimate || 0), 0)
+                 .toFixed(1);
+  }, [trucks]);
+
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -153,45 +303,52 @@ const Reports: React.FC = () => {
         />
         <ReportCard
           title="Trucks with CA Work"
-          value={caWorkTrucks}
+          value={caWorkTrucksCount}
           description="Trucks requiring customer adaptation"
           icon={<ListChecksIcon className="h-5 w-5 text-purple-600" />}
+          onClick={() => setShowCaWorkTrucksDialog(true)}
         />
         <ReportCard
           title="Quick Mover Trucks"
-          value={quickMoverTrucks}
+          value={quickMoverTrucksCount}
           description="Trucks with only 1 deviation, ready for quick completion"
           icon={<HourglassIcon className="h-5 w-5 text-green-600" />}
+          onClick={() => setShowQuickMoverTrucksDialog(true)}
         />
         <ReportCard
           title="Available Operators"
           value={availableOperatorsCount}
           description="Operators currently available for assignment"
           icon={<UsersIcon className="h-5 w-5 text-teal-600" />}
+          onClick={() => setShowAvailableOperatorsDialog(true)}
         />
         <ReportCard
           title="Overdue Trucks"
           value={overdueTrucksCount}
           description="Trucks past their delivery date"
           icon={<AlertCircleIcon className="h-5 w-5 text-red-600" />}
+          onClick={() => setShowOverdueTrucksDialog(true)}
         />
         <ReportCard
           title="Trucks with Pending Parts"
-          value={trucksWithPendingMissingParts}
+          value={trucksWithPendingMissingPartsCount}
           description="Trucks waiting for missing parts"
           icon={<PackageXIcon className="h-5 w-5 text-gray-600" />}
+          onClick={() => setShowPendingPartsTrucksDialog(true)}
         />
         <ReportCard
           title="Total Assigned Trucks"
           value={totalAssignedTrucks}
           description="Trucks currently assigned to an operator"
           icon={<UserPlusIcon className="h-5 w-5 text-blue-500" />}
+          onClick={() => setShowAssignedTrucksDialog(true)}
         />
         <ReportCard
           title="Total Completed Trucks"
           value={totalCompletedTrucks}
           description="Trucks that have finished all work"
           icon={<CheckCircleIcon className="h-5 w-5 text-green-500" />}
+          onClick={() => setShowCompletedTrucksDialog(true)}
         />
         <ReportCard
           title="Avg. Repair Time/Truck"
@@ -204,15 +361,34 @@ const Reports: React.FC = () => {
           value={projectTrucksCount}
           description="Trucks associated with a specific project"
           icon={<FolderKanbanIcon className="h-5 w-5 text-pink-600" />}
+          onClick={() => setShowProjectTrucksDialog(true)}
+        />
+        <ReportCard
+          title="Uncompleted Dev. Hours"
+          value={`${totalUncompletedDeviationHours} hrs`}
+          description="Estimated hours for deviations on uncompleted trucks"
+          icon={<WrenchIcon className="h-5 w-5 text-orange-500" />}
+        />
+        <ReportCard
+          title="Uncompleted Parts Hours"
+          value={`${totalUncompletedMissingPartsHours} hrs`}
+          description="Estimated hours for missing parts on uncompleted trucks"
+          icon={<PackageXIcon className="h-5 w-5 text-gray-500" />}
+        />
+        <ReportCard
+          title="Uncompleted CA Hours"
+          value={`${totalUncompletedCAHours} hrs`}
+          description="Estimated hours for CA work on uncompleted trucks"
+          icon={<ListChecksIcon className="h-5 w-5 text-purple-500" />}
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Repair Type Summary */}
+        {/* Repair Type Summary - List */}
         <Card className="shadow-lg p-6">
           <CardHeader>
             <CardTitle className="text-xl font-semibold text-gray-800 flex items-center">
-              <BarChart className="mr-2 h-5 w-5 text-blue-600" /> Trucks by Repair Type
+              <BarChart className="mr-2 h-5 w-5 text-blue-600" /> Trucks by Repair Type (List)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -231,11 +407,29 @@ const Reports: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Missing Parts Summary */}
+        {/* Repair Type Summary - Chart */}
         <Card className="shadow-lg p-6">
           <CardHeader>
             <CardTitle className="text-xl font-semibold text-gray-800 flex items-center">
-              <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Unique Missing Parts Count
+              <BarChart className="mr-2 h-5 w-5 text-blue-600" /> Trucks by Repair Type (Chart)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {repairTypeChartData.labels.length > 0 ? (
+              <div className="h-[200px] w-full">
+                <Bar data={repairTypeChartData} options={repairTypeChartOptions} />
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-center py-4">No repair type data available for chart.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Missing Parts Summary - List */}
+        <Card className="shadow-lg p-6">
+          <CardHeader>
+            <CardTitle className="text-xl font-semibold text-gray-800 flex items-center">
+              <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Unique Missing Parts Count (List)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -251,6 +445,24 @@ const Reports: React.FC = () => {
                 <p className="text-muted-foreground text-center py-4">No missing parts data available.</p>
               )}
             </ul>
+          </CardContent>
+        </Card>
+
+        {/* Missing Parts Summary - Chart */}
+        <Card className="shadow-lg p-6">
+          <CardHeader>
+            <CardTitle className="text-xl font-semibold text-gray-800 flex items-center">
+              <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Unique Missing Parts Count (Chart)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {missingPartsChartData.labels.length > 0 ? (
+              <div className="h-[200px] w-full">
+                <Bar data={missingPartsChartData} options={missingPartsChartOptions} />
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-center py-4">No missing parts data available for chart.</p>
+            )}
           </CardContent>
         </Card>
 
@@ -277,6 +489,64 @@ const Reports: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Dialogs for clickable cards */}
+      <TruckListDialog
+        isOpen={showCaWorkTrucksDialog}
+        onClose={() => setShowCaWorkTrucksDialog(false)}
+        title="Trucks with Customer Adaptation Work"
+        description="List of trucks that have customer adaptation work."
+        trucks={caWorkTrucksList}
+      />
+      <TruckListDialog
+        isOpen={showQuickMoverTrucksDialog}
+        onClose={() => setShowQuickMoverTrucksDialog(false)}
+        title="Quick Mover Trucks"
+        description="Trucks with only one deviation, no missing parts, and no CA work, ready for quick completion."
+        trucks={quickMoverTrucksList}
+      />
+      <OperatorListDialog
+        isOpen={showAvailableOperatorsDialog}
+        onClose={() => setShowAvailableOperatorsDialog(false)}
+        title="Available Operators"
+        description="List of operators currently available for assignment."
+        operators={availableOperatorsList}
+      />
+      <TruckListDialog
+        isOpen={showOverdueTrucksDialog}
+        onClose={() => setShowOverdueTrucksDialog(false)}
+        title="Overdue Trucks"
+        description="Trucks that are past their estimated delivery date and not yet completed."
+        trucks={overdueTrucksList}
+      />
+      <TruckListDialog
+        isOpen={showPendingPartsTrucksDialog}
+        onClose={() => setShowPendingPartsTrucksDialog(false)}
+        title="Trucks with Pending Missing Parts"
+        description="Trucks that are waiting for missing parts to become available."
+        trucks={trucksWithPendingMissingPartsList}
+      />
+      <TruckListDialog
+        isOpen={showAssignedTrucksDialog}
+        onClose={() => setShowAssignedTrucksDialog(false)}
+        title="Total Assigned Trucks"
+        description="Trucks currently assigned to one or more operators."
+        trucks={assignedTrucksList}
+      />
+      <TruckListDialog
+        isOpen={showCompletedTrucksDialog}
+        onClose={() => setShowCompletedTrucksDialog(false)}
+        title="Total Completed Trucks"
+        description="Trucks that have been marked as fully completed."
+        trucks={completedTrucksList}
+      />
+      <TruckListDialog
+        isOpen={showProjectTrucksDialog}
+        onClose={() => setShowProjectTrucksDialog(false)}
+        title="Project Trucks"
+        description="Trucks associated with a specific project code."
+        trucks={projectTrucksList}
+      />
     </div>
   );
 };
