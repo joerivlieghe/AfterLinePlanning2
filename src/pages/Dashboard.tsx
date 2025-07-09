@@ -1,160 +1,452 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react'; // Added useEffect for debugging
 import { useAppContext } from '@/context/AppContext';
 import TruckCard from '@/components/TruckCard';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import OperatorCard from '@/components/OperatorCard';
 import { Input } from '@/components/ui/input';
-import { SearchIcon, FilterIcon, CodeIcon, CalendarIcon, InfoIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { getAvailableShiftHours, getStatusColor } from '@/lib/data';
+import { SearchIcon, UsersIcon, WrenchIcon, CheckCircleIcon, ClockIcon, AlertCircleIcon, PackageXIcon, TruckIcon, UserPlusIcon } from 'lucide-react';
 import { Truck, RepairType, TruckStatus } from '@/types';
-import { REPAIR_TYPES, CUSTOMER_PRIORITIES, getPriorityScore } from '@/lib/data';
+import { useNavigate } from 'react-router-dom';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { REPAIR_TYPES, CUSTOMER_PRIORITIES } from '@/lib/data'; // Import constants
+
+const ALL_TRUCK_STATUSES: TruckStatus[] = [
+  'Pending', 'In Progress', 'Partial', 'Completed', 'Overdue',
+  'Missing Parts Not Available', 'Assigned', 'Ready to Finish',
+  'Overdue - Not Ready', 'Not Ready', 'Overdue - Ready to Plan', 'Ready to Plan'
+];
 
 const Dashboard: React.FC = () => {
-  const { trucks, allProjectCodes } = useAppContext();
+  const { trucks, operators, setTrucks, setOperators, prioritizedTrucks, allProjectCodes } = useAppContext();
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterRepairType, setFilterRepairType] = useState<RepairType | 'All'>('All');
-  const [filterProjectCode, setFilterProjectCode] = useState<string | 'All'>('All');
-  const [filterStatus, setFilterStatus] = useState<TruckStatus | 'All'>('All');
-  const [filterCustomerPriority, setFilterCustomerPriority] = useState<Truck['customerPriority'] | 'All'>('All');
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
+  const [selectedTruckId, setSelectedTruckId] = useState<string | null>(null);
+  const [selectedOperatorId, setSelectedOperatorId] = useState<string | null>(null);
+  const [showRepairTimeWarning, setShowRepairTimeWarning] = useState(false);
 
+  // Filter states
+  const [filterRepairType, setFilterRepairType] = useState<RepairType | 'all'>('all');
+  const [filterProjectCode, setFilterProjectCode] = useState<string | 'all'>('all'); // Changed to 'all'
+  const [filterStatus, setFilterStatus] = useState<TruckStatus | 'all'>('all');
+  const [filterCustomerPriority, setFilterCustomerPriority] = useState<Truck['customerPriority'] | 'all'>('all');
+
+  // Memoized filtered trucks based on all filters
   const filteredTrucks = useMemo(() => {
-    let filtered = trucks;
+    console.log('Filtering trucks. Total trucks:', trucks.length); // Debug log
+    console.log('Current filters:', { filterRepairType, filterProjectCode, filterStatus, filterCustomerPriority }); // Debug log
 
-    if (searchTerm) {
-      const lowercasedSearchTerm = searchTerm.toLowerCase();
-      filtered = filtered.filter(truck =>
-        truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm) ||
-        truck.projectCode?.toLowerCase().includes(lowercasedSearchTerm)
-      );
-    }
+    const result = trucks.filter(truck => {
+      const matchesRepairType = filterRepairType === 'all' || truck.repairType === filterRepairType;
+      const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
+      const matchesStatus = filterStatus === 'all' || truck.status === filterStatus;
+      const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
+      return matchesRepairType && matchesProjectCode && matchesStatus && matchesCustomerPriority;
+    });
+    console.log('Filtered trucks count:', result.length); // Debug log
+    return result;
+  }, [trucks, filterRepairType, filterProjectCode, filterStatus, filterCustomerPriority]);
 
-    if (filterRepairType !== 'All') {
-      filtered = filtered.filter(truck => truck.repairType === filterRepairType);
-    }
+  // Kanban Column Filters - now based on filteredTrucks
+  const overdueMissingPartsTrucks = useMemo(() =>
+    filteredTrucks.filter(truck => truck.status === 'Overdue - Not Ready')
+    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
+    [filteredTrucks]
+  );
 
-    if (filterProjectCode !== 'All') {
-      filtered = filtered.filter(truck => truck.projectCode === filterProjectCode);
-    }
+  const notReadyMissingPartsTrucks = useMemo(() =>
+    filteredTrucks.filter(truck => truck.status === 'Not Ready')
+    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
+    [filteredTrucks]
+  );
 
-    if (filterStatus !== 'All') {
-      filtered = filtered.filter(truck => truck.status === filterStatus);
-    }
+  const overdueReadyToPlanTrucks = useMemo(() =>
+    prioritizedTrucks.filter(truck => truck.status === 'Overdue - Ready to Plan' && filteredTrucks.some(ft => ft.id === truck.id)),
+    [prioritizedTrucks, filteredTrucks]
+  );
 
-    if (filterCustomerPriority !== 'All') {
-      filtered = filtered.filter(truck => truck.customerPriority === filterCustomerPriority);
-    }
+  const readyToPlanTrucks = useMemo(() =>
+    prioritizedTrucks.filter(truck => truck.status === 'Ready to Plan' && filteredTrucks.some(ft => ft.id === truck.id)),
+    [prioritizedTrucks, filteredTrucks]
+  );
 
-    return filtered;
-  }, [trucks, searchTerm, filterRepairType, filterProjectCode, filterStatus, filterCustomerPriority]);
+  const assignedTrucks = useMemo(() =>
+    filteredTrucks.filter(truck => truck.status === 'Assigned'),
+    [filteredTrucks]
+  );
 
-  const getColumnTrucks = (status: TruckStatus) => {
-    return filteredTrucks
-      .filter(truck => truck.status === status)
-      .sort((a, b) => getPriorityScore(b).totalScore - getPriorityScore(a).totalScore);
+  const partialTrucks = useMemo(() => filteredTrucks.filter(truck => truck.status === 'Partial'), [filteredTrucks]);
+  const readyToFinishTrucks = useMemo(() => filteredTrucks.filter(truck => truck.status === 'Ready to Finish'), [filteredTrucks]);
+  const completedTrucks = useMemo(() => filteredTrucks.filter(truck => truck.status === 'Completed'), [filteredTrucks]);
+
+  // Debugging the final lists
+  useEffect(() => {
+    console.log('Dashboard Render - Trucks in each column:');
+    console.log('Overdue - Missing Parts:', overdueMissingPartsTrucks.length);
+    console.log('Not Ready - Missing Parts:', notReadyMissingPartsTrucks.length);
+    console.log('Overdue - Ready to Plan:', overdueReadyToPlanTrucks.length);
+    console.log('Ready to Plan:', readyToPlanTrucks.length);
+    console.log('Assigned:', assignedTrucks.length);
+    console.log('Partial:', partialTrucks.length);
+    console.log('Ready to Finish:', readyToFinishTrucks.length);
+    console.log('Completed:', completedTrucks.length);
+  }, [
+    overdueMissingPartsTrucks,
+    notReadyMissingPartsTrucks,
+    overdueReadyToPlanTrucks,
+    readyToPlanTrucks,
+    assignedTrucks,
+    partialTrucks,
+    readyToFinishTrucks,
+    completedTrucks
+  ]);
+
+
+  const filteredOperators = useMemo(() => {
+    const lowercasedSearchTerm = searchTerm.toLowerCase();
+    return operators.filter(operator =>
+      operator.name.toLowerCase().includes(lowercasedSearchTerm) ||
+      operator.competencies.some(comp => comp.toLowerCase().includes(lowercasedSearchTerm)) ||
+      operator.status.toLowerCase().includes(lowercasedSearchTerm)
+    );
+  }, [operators, searchTerm]);
+
+  const handleAssignClick = (truckId: string) => {
+    setSelectedTruckId(truckId);
+    setIsAssignDialogOpen(true);
+    setShowRepairTimeWarning(false); // Reset warning
   };
 
-  const columns: { status: TruckStatus; title: string }[] = [
-    { status: 'Overdue - Not Ready', title: 'Overdue - Not Ready' },
-    { status: 'Not Ready', title: 'Not Ready' },
-    { status: 'Overdue - Ready to Plan', title: 'Overdue - Ready to Plan' },
-    { status: 'Ready to Plan', title: 'Ready to Plan' },
-    { status: 'Assigned', title: 'Assigned' },
-    { status: 'In Progress', title: 'In Progress' },
-    { status: 'Ready to Finish', title: 'Ready to Finish' },
-    { status: 'Completed', title: 'Completed' },
-  ];
+  const handleAssignTruck = () => {
+    if (selectedTruckId && selectedOperatorId) {
+      const truckToAssign = trucks.find(t => t.id === selectedTruckId);
+      const operatorToAssign = operators.find(op => op.id === selectedOperatorId);
+
+      if (!truckToAssign || !operatorToAssign) return;
+
+      const availableHours = getAvailableShiftHours(operatorToAssign);
+      if (truckToAssign.repairTimeEstimate > availableHours && !showRepairTimeWarning) {
+        setShowRepairTimeWarning(true);
+        return; // Show warning first, then allow re-click to proceed
+      }
+
+      setTrucks(prevTrucks =>
+        prevTrucks.map(truck =>
+          truck.id === selectedTruckId
+            ? { ...truck, assignedOperatorIds: [...truck.assignedOperatorIds, selectedOperatorId], status: 'Assigned' }
+            : truck
+        )
+      );
+
+      setOperators(prevOperators =>
+        prevOperators.map(operator =>
+          operator.id === selectedOperatorId
+            ? {
+                ...operator,
+                assignedTrucks: [
+                  ...operator.assignedTrucks,
+                  trucks.find(t => t.id === selectedTruckId)!,
+                ],
+                status: 'Busy',
+              }
+            : operator
+        )
+      );
+
+      setIsAssignDialogOpen(false);
+      setSelectedTruckId(null);
+      setSelectedOperatorId(null);
+      setShowRepairTimeWarning(false);
+    }
+  };
+
+  const availableOperators = useMemo(() => {
+    if (!selectedTruckId) return [];
+    const truckToAssign = trucks.find(t => t.id === selectedTruckId);
+    if (!truckToAssign) return [];
+
+    return operators.filter(op =>
+      op.status === 'Available' &&
+      op.competencies.includes(truckToAssign.repairType)
+    );
+  }, [operators, selectedTruckId, trucks]);
+
+  const selectedOperatorAvailableHours = useMemo(() => {
+    if (!selectedOperatorId) return 0;
+    const operator = operators.find(op => op.id === selectedOperatorId);
+    return operator ? getAvailableShiftHours(operator) : 0;
+  }, [selectedOperatorId, operators]);
+
+  const selectedTruckRepairTime = useMemo(() => {
+    if (!selectedTruckId) return 0;
+    const truck = trucks.find(t => t.id === selectedTruckId);
+    return truck ? truck.repairTimeEstimate : 0;
+  }, [selectedTruckId, trucks]);
+
+  const handleOpenWizard = () => {
+    navigate('/operators', { state: { openWizard: true } });
+  };
 
   return (
-    <div className="p-6 flex flex-col h-screen">
-      <h1 className="text-3xl font-bold mb-6 text-gray-900">Truck Repair Dashboard</h1>
-      <p className="text-lg text-gray-700 mb-8">Overview of all trucks and their current repair status.</p>
-
-      <div className="flex flex-wrap gap-4 mb-6 items-center">
-        <div className="relative flex-grow max-w-sm">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-          <Input
-            type="text"
-            placeholder="Search by chassis or project code..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 pr-3 py-2 border rounded-md w-full"
-          />
-        </div>
-
-        <Select value={filterRepairType} onValueChange={(value: RepairType | 'All') => setFilterRepairType(value)}>
-          <SelectTrigger className="w-[180px]">
-            <FilterIcon className="mr-2 h-4 w-4 text-gray-500" />
-            <SelectValue placeholder="Filter by Repair Type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All Repair Types</SelectItem>
-            {REPAIR_TYPES.map(type => (
-              <SelectItem key={type} value={type}>{type}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={filterProjectCode} onValueChange={(value: string | 'All') => setFilterProjectCode(value)}>
-          <SelectTrigger className="w-[180px]">
-            <CodeIcon className="mr-2 h-4 w-4 text-gray-500" />
-            <SelectValue placeholder="Filter by Project Code" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All Project Codes</SelectItem>
-            {allProjectCodes.map(code => (
-              <SelectItem key={code} value={code}>{code}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={filterStatus} onValueChange={(value: TruckStatus | 'All') => setFilterStatus(value)}>
-          <SelectTrigger className="w-[180px]">
-            <CalendarIcon className="mr-2 h-4 w-4 text-gray-500" />
-            <SelectValue placeholder="Filter by Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All Statuses</SelectItem>
-            {columns.map(col => (
-              <SelectItem key={col.status} value={col.status}>{col.title}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={filterCustomerPriority} onValueChange={(value: Truck['customerPriority'] | 'All') => setFilterCustomerPriority(value)}>
-          <SelectTrigger className="w-[180px]">
-            <InfoIcon className="mr-2 h-4 w-4 text-gray-500" />
-            <SelectValue placeholder="Filter by Priority" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All Priorities</SelectItem>
-            {CUSTOMER_PRIORITIES.map(priority => (
-              <SelectItem key={priority} value={priority}>{priority}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+    <div className="p-6 bg-gray-50 min-h-screen">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-4xl font-extrabold text-gray-900">Workshop Dashboard</h1>
+        <Button onClick={handleOpenWizard} className="bg-blue-600 hover:bg-blue-700 text-white">
+          <TruckIcon className="mr-2 h-4 w-4" /> Auto-Assign Wizard
+        </Button>
       </div>
 
-      <ScrollArea className="flex-1 whitespace-nowrap">
-        <div className="inline-flex h-full space-x-6 p-2">
-          {columns.map(column => (
-            <div key={column.status} className="flex flex-col min-w-[300px] max-w-[350px] border rounded-lg shadow-md bg-gray-50 h-full">
-              <h2 className="text-xl font-semibold p-4 bg-blue-100 text-blue-800 rounded-t-lg sticky top-0 z-10">
-                {column.title} ({getColumnTrucks(column.status).length})
-              </h2>
-              <ScrollArea className="flex-1 p-4">
-                <div className="space-y-4">
-                  {getColumnTrucks(column.status).length > 0 ? (
-                    getColumnTrucks(column.status).map(truck => (
-                      <TruckCard key={truck.id} truck={truck} showProjectCode={true} />
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground italic">No trucks in this column.</p>
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          ))}
+      {/* Filters Section */}
+      <div className="bg-white p-6 rounded-lg shadow-md mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div>
+          <label htmlFor="repairTypeFilter" className="block text-sm font-medium text-gray-700 mb-1">Repair Type</label>
+          <Select value={filterRepairType} onValueChange={value => setFilterRepairType(value as RepairType | 'all')}>
+            <SelectTrigger id="repairTypeFilter">
+              <SelectValue placeholder="All Repair Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Repair Types</SelectItem>
+              {REPAIR_TYPES.map(type => (
+                <SelectItem key={type} value={type}>{type}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </ScrollArea>
+        <div>
+          <label htmlFor="projectCodeFilter" className="block text-sm font-medium text-gray-700 mb-1">Project Code</label>
+          <Select value={filterProjectCode} onValueChange={value => setFilterProjectCode(value)}>
+            <SelectTrigger id="projectCodeFilter">
+              <SelectValue placeholder="All Project Codes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Project Codes</SelectItem>
+              {allProjectCodes.map(code => (
+                <SelectItem key={code} value={code}>{code}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="statusFilter" className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+          <Select value={filterStatus} onValueChange={value => setFilterStatus(value as TruckStatus | 'all')}>
+            <SelectTrigger id="statusFilter">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {ALL_TRUCK_STATUSES.map(status => (
+                <SelectItem key={status} value={status}>{status}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="priorityFilter" className="block text-sm font-medium text-gray-700 mb-1">Customer Priority</label>
+          <Select value={filterCustomerPriority} onValueChange={value => setFilterCustomerPriority(value as Truck['customerPriority'] | 'all')}>
+            <SelectTrigger id="priorityFilter">
+              <SelectValue placeholder="All Priorities" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Priorities</SelectItem>
+              {CUSTOMER_PRIORITIES.map(priority => (
+                <SelectItem key={priority} value={priority}>{priority}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Kanban Board */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-6">
+        {/* Overdue - Missing Parts Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-2 text-gray-800 flex items-center">
+            <AlertCircleIcon className="mr-2 h-5 w-5 text-red-600" /> Overdue - Missing Parts ({overdueMissingPartsTrucks.length})
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">Priority score is 0 due to pending missing parts.</p>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {overdueMissingPartsTrucks.length > 0 ? (
+                overdueMissingPartsTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No overdue trucks with missing parts.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Not Ready - Missing Parts Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-2 text-gray-800 flex items-center">
+            <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Not Ready - Missing Parts ({notReadyMissingPartsTrucks.length})
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">Priority score is 0 due to pending missing parts.</p>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {notReadyMissingPartsTrucks.length > 0 ? (
+                notReadyMissingPartsTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No trucks not ready due to missing parts.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Overdue - Ready to Plan Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <AlertCircleIcon className="mr-2 h-5 w-5 text-red-700" /> Overdue - Ready ({overdueReadyToPlanTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {overdueReadyToPlanTrucks.length > 0 ? (
+                overdueReadyToPlanTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} onAssignClick={handleAssignClick} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No overdue trucks ready to plan.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Ready to Plan Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <ClockIcon className="mr-2 h-5 w-5 text-blue-600" /> Ready to Plan ({readyToPlanTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {readyToPlanTrucks.length > 0 ? (
+                readyToPlanTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} onAssignClick={handleAssignClick} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No trucks ready to plan.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Assigned Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <UserPlusIcon className="mr-2 h-5 w-5 text-indigo-600" /> Assigned ({assignedTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {assignedTrucks.length > 0 ? (
+                assignedTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No assigned trucks.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Partial Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <WrenchIcon className="mr-2 h-5 w-5 text-orange-600" /> Partial ({partialTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {partialTrucks.length > 0 ? (
+                partialTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No partial trucks.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Ready to Finish Column (formerly In Progress) */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <WrenchIcon className="mr-2 h-5 w-5 text-yellow-600" /> Ready to Finish ({readyToFinishTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {readyToFinishTrucks.length > 0 ? (
+                readyToFinishTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No trucks ready to finish.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Completed Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <CheckCircleIcon className="mr-2 h-5 w-5 text-green-600" /> Completed ({completedTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+            <div className="space-y-4">
+              {completedTrucks.length > 0 ? (
+                completedTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No completed trucks.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      </div>
+
+      {/* Assign Operator Dialog */}
+      <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>Assign Truck to Operator</DialogTitle>
+            <DialogDescription>
+              Select an available operator to assign to truck {selectedTruckId}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 py-4">
+            {availableOperators.length > 0 ? (
+              availableOperators.map(operator => (
+                <OperatorCard
+                  key={operator.id}
+                  operator={operator}
+                  onClick={() => setSelectedOperatorId(operator.id)}
+                  isSelected={selectedOperatorId === operator.id}
+                />
+              ))
+            ) : (
+              <p className="col-span-full text-center text-muted-foreground py-8">
+                No operators available for this truck's repair type or estimated time.
+              </p>
+            )}
+          </div>
+          {selectedOperatorId && showRepairTimeWarning && selectedTruckRepairTime > selectedOperatorAvailableHours && (
+            <div className="bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-4 mt-4" role="alert">
+              <p className="font-bold">Warning!</p>
+              <p>The selected operator has only {selectedOperatorAvailableHours.toFixed(1)} hours available, but this truck requires {selectedTruckRepairTime} hours. Assigning this truck will likely lead to overtime or require another operator to finish the job.</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsAssignDialogOpen(false); setShowRepairTimeWarning(false); }}>Cancel</Button>
+            <Button onClick={handleAssignTruck} disabled={!selectedOperatorId}>
+              {showRepairTimeWarning ? 'Proceed Anyway' : 'Assign'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
