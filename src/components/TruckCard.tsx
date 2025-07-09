@@ -1,5 +1,5 @@
 import React from 'react';
-import { Truck, Deviation, MissingPart, TruckStatus } from '@/types';
+import { Truck, Deviation, MissingPart } from '@/types';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { getPriorityColor, getStatusColor, getSeverityColor, getMissingPartStatusColor, formatDate, calculateRemainingRepairTime, getPriorityScore } from '@/lib/data';

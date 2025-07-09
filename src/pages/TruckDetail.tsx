@@ -19,7 +19,8 @@ import {
   formatDate,
   calculateRemainingRepairTime,
   getAvailableShiftHours,
-  formatTime
+  formatTime,
+  getPriorityScore
 } from '@/lib/data';
 import {
   TruckIcon,
@@ -102,8 +103,8 @@ const TruckDetail: React.FC = () => {
 
   const confirmComplete = () => {
     markTruckComplete(truck.id);
-    setIsConfirmCompleteOpen(false);
     navigate('/dashboard'); // Navigate back to dashboard after completion
+    setIsConfirmCompleteOpen(false);
   };
 
   const handleMarkDeviationComplete = (deviationId: string) => {

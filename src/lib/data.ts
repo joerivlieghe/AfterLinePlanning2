@@ -9,9 +9,8 @@ import {
   MissingPart,
   TruckStatus,
   Shift,
-  ProposedAssignment,
 } from '@/types';
-import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds } from 'date-fns';
+import { addDays, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds } from 'date-fns';
 
 export const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
 const REPAIR_AREAS: RepairArea[] = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6'];
@@ -19,13 +18,6 @@ const MISSING_PART_STATUSES: MissingPartStatus[] = ['Ordered', 'In Transit', 'Av
 const OPERATOR_STATUSES: OperatorStatus[] = ['Available', 'Busy', 'On Break', 'Off Duty'];
 export const CUSTOMER_PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
 const SHIFTS: Shift[] = ['Early', 'Late'];
-
-// Define all possible truck statuses for generation
-const ALL_TRUCK_STATUSES_FOR_GENERATION: TruckStatus[] = [
-  'Pending', 'In Progress', 'Partial', 'Completed', 'Overdue',
-  'Missing Parts Not Available', 'Assigned', 'Ready to Finish',
-  'Overdue - Not Ready', 'Not Ready', 'Overdue - Ready to Plan', 'Ready to Plan'
-];
 
 // Define a fixed set of project codes
 const PROJECT_CODES: string[] = ['PROJ-ALPHA', 'PROJ-BETA', 'PROJ-GAMMA'];
@@ -284,7 +276,7 @@ export function generateTrucks(count: number): Truck[] {
 
     let status: TruckStatus;
     const hasPendingMissingParts = missingParts.some(mp => mp.status !== 'Available' && !mp.completed);
-    const isOverdue = isPast(deliveryDate, now);
+    const isOverdue = isPast(deliveryDate); // Corrected: isPast takes one argument
 
     // Determine status based on conditions
     if (hasPendingMissingParts) {
@@ -439,7 +431,7 @@ export function getPriorityScore(truck: Truck): PriorityBreakdown {
   }
 
   const daysUntilDelivery = differenceInDays(truck.deliveryDate, now);
-  if (isPast(truck.deliveryDate, now)) {
+  if (isPast(truck.deliveryDate)) { // Corrected: isPast takes one argument
     breakdown.deliveryDate = 100 + Math.min(50, Math.abs(daysUntilDelivery) * 5); // Higher score for more overdue
   } else if (daysUntilDelivery <= 0) { // Due today
     breakdown.deliveryDate = 100;
