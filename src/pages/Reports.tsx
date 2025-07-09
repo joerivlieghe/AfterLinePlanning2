@@ -3,14 +3,14 @@ import { useAppContext } from '@/context/AppContext';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { BarChart, PieChart, PackageXIcon, WrenchIcon, TruckIcon, UsersIcon, ClockIcon, AlertCircleIcon, CheckCircleIcon, UserPlusIcon, ListChecksIcon, HourglassIcon, FolderKanbanIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { getPriorityScore, getStatusColor, formatDate } from '@/lib/data';
-import { Truck, TruckStatus } from '@/types';
+import { Truck, TruckStatus, Operator } from '@/types';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import OperatorCard from '@/components/OperatorCard'; // Import OperatorCard
 
 interface ReportCardProps {
   title: string;
@@ -51,9 +51,10 @@ const Reports: React.FC = () => {
   const [showProjectTrucksDialog, setShowProjectTrucksDialog] = useState(false);
   const [showQuickMoverTrucksDialog, setShowQuickMoverTrucksDialog] = useState(false);
   const [showCATrucksDialog, setShowCATrucksDialog] = useState(false);
+  const [showAvailableOperatorsDialog, setShowAvailableOperatorsDialog] = useState(false); // New state for operators dialog
 
-  // Collapsible state for deviations
-  const [isDeviationsCollapsed, setIsDeviationsCollapsed] = useState(true);
+  // Collapsible state for deviations (new approach)
+  const [showAllDeviations, setShowAllDeviations] = useState(false);
 
   // KPI 1: Summary on repair type
   const repairTypeSummary = useMemo(() => {
@@ -135,9 +136,11 @@ const Reports: React.FC = () => {
   }, [trucks]);
 
   // KPI 9: Operators Available
-  const availableOperatorsCount = useMemo(() => {
-    return operators.filter(op => op.status === 'Available').length;
+  const availableOperatorsList = useMemo(() => {
+    return operators.filter(op => op.status === 'Available');
   }, [operators]);
+
+  const availableOperatorsCount = availableOperatorsList.length;
 
   // KPI 10: Overdue Trucks
   const overdueTrucksList = useMemo(() => {
@@ -238,6 +241,37 @@ const Reports: React.FC = () => {
     </Dialog>
   );
 
+  const renderOperatorListDialog = (
+    title: string,
+    description: string,
+    isOpen: boolean,
+    onOpenChange: (open: boolean) => void,
+    operatorsToDisplay: Operator[]
+  ) => (
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[900px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="flex-1 py-4 pr-4">
+          {operatorsToDisplay.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {operatorsToDisplay.map((operator) => (
+                <OperatorCard key={operator.id} operator={operator} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-center py-8">No operators found for this category.</p>
+          )}
+        </ScrollArea>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen w-full">
       <h1 className="text-4xl font-extrabold text-gray-900 mb-8">Workshop Reports & Analytics</h1>
@@ -284,6 +318,8 @@ const Reports: React.FC = () => {
           value={availableOperatorsCount}
           description="Operators currently available for assignment"
           icon={<UsersIcon className="h-5 w-5 text-teal-600" />}
+          isClickable // Make clickable
+          onClick={() => setShowAvailableOperatorsDialog(true)} // Open new dialog
         />
         <ReportCard
           title="Overdue Trucks"
@@ -405,7 +441,7 @@ const Reports: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Deviation Summary */}
+        {/* Deviation Summary (New Approach) */}
         <Card className="shadow-lg p-6">
           <CardHeader>
             <CardTitle className="text-xl font-semibold text-gray-800 flex items-center">
@@ -414,49 +450,36 @@ const Reports: React.FC = () => {
           </CardHeader>
           <CardContent>
             {deviationSummary.length > 0 ? (
-              <Collapsible
-                open={!isDeviationsCollapsed}
-                onOpenChange={setIsDeviationsCollapsed}
-                className="w-full space-y-2"
-              >
-                <ul className="space-y-2">
-                  {deviationSummary.slice(0, 5).map(([description, count]) => (
-                    <li key={description} className="flex justify-between items-center py-2 border-b last:border-b-0">
-                      <span className="text-gray-700 font-medium">{description}</span>
-                      <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-sm font-semibold">{count}</span>
-                    </li>
-                  ))}
-                </ul>
-                {deviationSummary.length > 5 && (
-                  <CollapsibleContent className="space-y-2">
-                    <ul className="space-y-2">
-                      {deviationSummary.slice(5).map(([description, count]) => (
-                        <li key={description} className="flex justify-between items-center py-2 border-b last:border-b-0">
-                          <span className="text-gray-700 font-medium">{description}</span>
-                          <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-sm font-semibold">{count}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </CollapsibleContent>
-                )}
-                {deviationSummary.length > 5 && (
+              <>
+                <div
+                  className="overflow-hidden transition-all duration-500 ease-in-out"
+                  style={{ maxHeight: showAllDeviations ? '9999px' : '250px' }} // Adjust max-height as needed
+                >
+                  <ul className="space-y-2">
+                    {deviationSummary.map(([description, count]) => (
+                      <li key={description} className="flex justify-between items-center py-2 border-b last:border-b-0">
+                        <span className="text-gray-700 font-medium">{description}</span>
+                        <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-sm font-semibold">{count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                {deviationSummary.length > 5 && ( // Only show button if there are more than 5 deviations
                   <div className="flex justify-center pt-4">
-                    <CollapsibleTrigger asChild>
-                      <Button variant="outline" size="sm" className="w-full">
-                        {isDeviationsCollapsed ? (
-                          <>
-                            Show All Deviations <ChevronDownIcon className="ml-2 h-4 w-4" />
-                          </>
-                        ) : (
-                          <>
-                            Show Less <ChevronUpIcon className="ml-2 h-4 w-4" />
-                          </>
-                        )}
-                      </Button>
-                    </CollapsibleTrigger>
+                    <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAllDeviations(!showAllDeviations)}>
+                      {showAllDeviations ? (
+                        <>
+                          Show Less <ChevronUpIcon className="ml-2 h-4 w-4" />
+                        </>
+                      ) : (
+                        <>
+                          Show All Deviations <ChevronDownIcon className="ml-2 h-4 w-4" />
+                        </>
+                      )}
+                    </Button>
                   </div>
                 )}
-              </Collapsible>
+              </>
             ) : (
               <p className="text-muted-foreground text-center py-4">No deviation data available.</p>
             )}
@@ -550,6 +573,15 @@ const Reports: React.FC = () => {
         showCATrucksDialog,
         setShowCATrucksDialog,
         caWorkTrucksList
+      )}
+
+      {/* New Dialog for Available Operators */}
+      {renderOperatorListDialog(
+        "Available Operators",
+        "A list of operators currently available for assignment.",
+        showAvailableOperatorsDialog,
+        setShowAvailableOperatorsDialog,
+        availableOperatorsList
       )}
     </div>
   );
