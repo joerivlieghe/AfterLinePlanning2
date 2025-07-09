@@ -37,16 +37,16 @@ export interface Truck {
   customerAdaptationCompletedBy?: string | null;
   customerAdaptationCompletedAt?: Date | null;
   okToDrive: boolean;
-  repairTimeEstimate: number; // This will now represent remaining time
-  deviationTimeEstimate?: number; // Initial estimate for deviations
-  missingPartsTimeEstimate?: number; // Initial estimate for missing parts
+  repairTimeEstimate: number;
+  deviationTimeEstimate?: number;
+  missingPartsTimeEstimate?: number;
   repairType: RepairType;
   repairAreaNeeded: RepairArea;
   deliveryDate: Date;
   customerPriority: 'Low' | 'Medium' | 'High' | 'Critical';
-  assignedOperatorIds: string[];
+  assignedOperatorIds: string[]; // Changed to array
   status: TruckStatus;
-  projectCode?: string;
+  projectCode?: string; // Added projectCode
 }
 
 export interface Operator {
@@ -57,13 +57,13 @@ export interface Operator {
   shiftStartTime: Date;
   shiftEndTime: Date;
   shift: Shift;
-  assignedTruckIds: string[]; // Changed to store only IDs
+  assignedTrucks: Truck[];
   efficiency: number;
 }
 
 export interface ProposedAssignment {
   truck: Truck;
-  operator: Operator; // This will be the simulated operator object
+  operator: Operator;
   rejected: boolean;
   operatorAvailableHoursBefore: number;
   operatorAvailableHoursAfter: number;

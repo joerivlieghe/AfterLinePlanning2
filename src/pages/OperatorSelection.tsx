@@ -9,11 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, getPriorityScore, calculateRemainingRepairTime } from '@/lib/data';
+import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, getPriorityScore } from '@/lib/data';
 import { UsersIcon, ClockIcon, GaugeIcon, WrenchIcon, InfoIcon, TruckIcon, SearchIcon, FilterIcon, CalendarDaysIcon, CheckCircleIcon, XCircleIcon } from 'lucide-react';
 import { Operator, Truck, Shift, RepairType, ProposedAssignment } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { format, parseISO } from 'date-fns';
 
 const OperatorSelection: React.FC = () => {
   const { operators, trucks, prioritizedTrucks, assignOperatorToTruck } = useAppContext();
@@ -29,7 +28,6 @@ const OperatorSelection: React.FC = () => {
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [selectedShiftForWizard, setSelectedShiftForWizard] = useState<Shift | null>(null);
-  const [planningDateForWizard, setPlanningDateForWizard] = useState<Date>(new Date());
   const [proposedAssignments, setProposedAssignments] = useState<ProposedAssignment[]>([]);
 
   useEffect(() => {
@@ -37,7 +35,6 @@ const OperatorSelection: React.FC = () => {
       setIsWizardOpen(true);
       setWizardStep(1);
       setSelectedShiftForWizard(null);
-      setPlanningDateForWizard(new Date()); // Default to today
       setProposedAssignments([]);
       navigate(location.pathname, { replace: true, state: {} });
     }
@@ -71,10 +68,7 @@ const OperatorSelection: React.FC = () => {
 
     // Calculate occupancy rate for sorting and add it to the operator object
     const operatorsWithOccupancy = filtered.map(operator => {
-      const assignedRepairTime = operator.assignedTruckIds.reduce((sum, truckId) => {
-        const truck = trucks.find(t => t.id === truckId);
-        return sum + (truck ? calculateRemainingRepairTime(truck) : 0);
-      }, 0);
+      const assignedRepairTime = operator.assignedTrucks.reduce((sum, truck) => sum + truck.repairTimeEstimate, 0);
       const totalShiftHours = (operator.shiftEndTime.getTime() - operator.shiftStartTime.getTime()) / (1000 * 60 * 60);
       const occupancyRate = totalShiftHours > 0 ? (assignedRepairTime / totalShiftHours) : 0;
       return { ...operator, occupancyRate };
@@ -84,124 +78,62 @@ const OperatorSelection: React.FC = () => {
     operatorsWithOccupancy.sort((a, b) => b.occupancyRate - a.occupancyRate);
 
     return operatorsWithOccupancy;
-  }, [operators, searchTerm, filterShift, filterStatus, filterCompetency, trucks]);
+  }, [operators, searchTerm, filterShift, filterStatus, filterCompetency]);
 
   const startAutoAssignWizard = () => {
     setIsWizardOpen(true);
     setWizardStep(1);
     setSelectedShiftForWizard(null);
-    setPlanningDateForWizard(new Date()); // Reset to today
     setProposedAssignments([]);
   };
 
   const generateProposals = () => {
-    if (!selectedShiftForWizard || !planningDateForWizard) return;
+    if (!selectedShiftForWizard) return;
 
-    // Create a deep copy of operators for simulation, including their current assigned trucks' *remaining* repair times
-    const tempOperators = new Map(operators.map(op => {
-      const currentAssignedWorkload = op.assignedTruckIds.reduce((sum, truckId) => {
-        const truck = trucks.find(t => t.id === truckId);
-        return sum + (truck ? calculateRemainingRepairTime(truck) : 0);
-      }, 0);
-
-      const totalShiftDurationHours = (op.shiftEndTime.getTime() - op.shiftStartTime.getTime()) / (1000 * 60 * 60);
-      let simulatedAvailableHours = Math.max(0, totalShiftDurationHours - currentAssignedWorkload);
-
-      // If planning for today, adjust available hours based on current time
-      if (format(planningDateForWizard, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')) {
-        const shiftStartOnPlanningDate = new Date(planningDateForWizard);
-        shiftStartOnPlanningDate.setHours(op.shiftStartTime.getHours(), op.shiftStartTime.getMinutes(), 0, 0);
-        const shiftEndOnPlanningDate = new Date(planningDateForWizard);
-        shiftEndOnPlanningDate.setHours(op.shiftEndTime.getHours(), op.shiftEndTime.getMinutes(), 0, 0);
-        const now = new Date();
-
-        if (now > shiftEndOnPlanningDate) {
-          simulatedAvailableHours = 0;
-        } else if (now < shiftStartOnPlanningDate) {
-          // Shift hasn't started yet, full duration available
-          // simulatedAvailableHours is already calculated based on full duration
-        } else {
-          // Shift in progress, calculate remaining time from now
-          simulatedAvailableHours = (shiftEndOnPlanningDate.getTime() - now.getTime()) / (1000 * 60 * 60) - currentAssignedWorkload;
-        }
-      }
-
-      if (op.status === 'Off Duty' || op.status === 'On Break') {
-        simulatedAvailableHours = 0;
-      }
-
-      return [op.id, {
-        ...op,
-        simulatedAvailableHours: Math.max(0, simulatedAvailableHours),
-        simulatedAssignedTrucksCount: op.assignedTruckIds.length,
-        simulatedAssignedTruckIds: [...op.assignedTruckIds], // Track assigned truck IDs for simulation
-      }];
-    }));
+    const tempOperators = new Map(operators.map(op => [op.id, {
+      ...op,
+      simulatedAvailableHours: getAvailableShiftHours(op),
+      simulatedAssignedTrucksCount: op.assignedTrucks.length, // Track existing assignments
+    }]));
 
     // Filter for trucks that are ready for assignment AND have no operators currently assigned
-    // Also, ensure they are not 'Completed' or 'Ready to Finish' or 'Partial'
     const unassignedPrioritizedTrucks = [...prioritizedTrucks].filter(truck =>
       truck.assignedOperatorIds.length === 0 && // Only consider trucks with no assigned operators for wizard
-      truck.status !== 'Completed' && truck.status !== 'Ready to Finish' && truck.status !== 'Partial' &&
-      calculateRemainingRepairTime(truck) > 0 // Only consider trucks with actual remaining work
+      truck.status !== 'Completed' && truck.status !== 'Ready to Finish' && truck.status !== 'Partial'
     );
 
-    // Sort trucks by priority score (descending)
+    const newProposals: ProposedAssignment[] = [];
+
     unassignedPrioritizedTrucks.sort((a, b) => getPriorityScore(b).totalScore - getPriorityScore(a).totalScore);
 
-    const newProposals: ProposedAssignment[] = [];
-    const assignedTruckIdsInProposal = new Set<string>();
+    for (const truck of unassignedPrioritizedTrucks) {
+      const totalTruckWorkTime = truck.repairTimeEstimate; // repairTimeEstimate already includes CA time
 
-    // Iterate through operators and try to fill their shifts with high-priority trucks
-    // Sort operators by their current simulated available hours (ascending) to fill up smaller gaps first,
-    // or by efficiency, or by current workload. Let's try by available hours (ascending) to fill up those with less time first.
-    const operatorsToConsider = Array.from(tempOperators.values()).filter(op => op.simulatedAvailableHours > 0);
-    operatorsToConsider.sort((a, b) => a.simulatedAvailableHours - b.simulatedAvailableHours);
+      const suitableOperator = Array.from(tempOperators.values())
+        .filter(op =>
+          op.shift === selectedShiftForWizard &&
+          op.status === 'Available' &&
+          (op.competencies.includes(truck.repairType) || (truck.customerAdaptationWork && op.competencies.includes('Customer Adaptation'))) &&
+          op.simulatedAvailableHours >= totalTruckWorkTime &&
+          op.simulatedAssignedTrucksCount < 3 // Max 3 trucks per operator
+        )
+        .sort((a, b) => a.simulatedAvailableHours - b.simulatedAvailableHours)
+        .find(Boolean);
 
-    for (const operator of operatorsToConsider) {
-      // Keep trying to assign trucks to this operator until their shift is full or max trucks reached
-      while (operator.simulatedAvailableHours > 0 && operator.simulatedAssignedTrucksCount < 3) {
-        // Find the highest priority unassigned truck that this operator can handle
-        const suitableTruck = unassignedPrioritizedTrucks.find(truck => {
-          const truckRemainingTime = calculateRemainingRepairTime(truck);
-          return (
-            !assignedTruckIdsInProposal.has(truck.id) && // Not already proposed for assignment
-            truck.status !== 'Completed' && // Ensure it's not completed
-            truckRemainingTime > 0 && // Ensure it has work
-            operator.shift === selectedShiftForWizard && // Operator must be on the selected shift
-            operator.status === 'Available' && // Operator must be available (simulated status)
-            (operator.competencies.includes(truck.repairType) || (truck.customerAdaptationWork && operator.competencies.includes('Customer Adaptation'))) &&
-            operator.simulatedAvailableHours >= truckRemainingTime
-          );
+      if (suitableOperator) {
+        const operatorBeforeHours = suitableOperator.simulatedAvailableHours;
+        suitableOperator.simulatedAvailableHours -= totalTruckWorkTime;
+        suitableOperator.simulatedAssignedTrucksCount++;
+
+        newProposals.push({
+          truck,
+          operator: suitableOperator,
+          rejected: false,
+          operatorAvailableHoursBefore: operatorBeforeHours,
+          operatorAvailableHoursAfter: suitableOperator.simulatedAvailableHours,
         });
-
-        if (suitableTruck) {
-          const operatorBeforeHours = operator.simulatedAvailableHours;
-          operator.simulatedAvailableHours -= calculateRemainingRepairTime(suitableTruck);
-          operator.simulatedAssignedTrucksCount++;
-          operator.simulatedAssignedTruckIds.push(suitableTruck.id); // Track simulated assignment
-
-          newProposals.push({
-            truck: suitableTruck,
-            operator: operator, // This is the tempOperator object
-            rejected: false,
-            operatorAvailableHoursBefore: operatorBeforeHours,
-            operatorAvailableHoursAfter: operator.simulatedAvailableHours,
-          });
-          assignedTruckIdsInProposal.add(suitableTruck.id);
-
-          // Remove the assigned truck from the unassigned list to prevent re-assignment
-          const index = unassignedPrioritizedTrucks.findIndex(t => t.id === suitableTruck.id);
-          if (index > -1) {
-            unassignedPrioritizedTrucks.splice(index, 1);
-          }
-        } else {
-          // No more suitable trucks for this operator, move to the next operator
-          break;
-        }
       }
     }
-
     setProposedAssignments(newProposals);
     setWizardStep(2);
   };
@@ -228,7 +160,6 @@ const OperatorSelection: React.FC = () => {
     setIsWizardOpen(false);
     setProposedAssignments([]);
     setSelectedShiftForWizard(null);
-    setPlanningDateForWizard(new Date());
   };
 
   const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
@@ -236,7 +167,7 @@ const OperatorSelection: React.FC = () => {
   const totalProposedTrucks = proposedAssignments.filter(p => !p.rejected).length;
   const totalProposedRepairTime = proposedAssignments
     .filter(p => !p.rejected)
-    .reduce((sum, p) => sum + calculateRemainingRepairTime(p.truck), 0);
+    .reduce((sum, p) => sum + p.truck.repairTimeEstimate, 0);
 
   return (
     <div className="p-6 flex flex-col h-screen">
@@ -303,7 +234,7 @@ const OperatorSelection: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredOperators.length > 0 ? (
             filteredOperators.map((operator) => {
-              const availableHours = getAvailableShiftHours(operator, trucks); // Pass trucks for lookup
+              const availableHours = getAvailableShiftHours(operator);
               const occupancyRate = operator.occupancyRate;
 
               return (
@@ -339,7 +270,7 @@ const OperatorSelection: React.FC = () => {
                     </div>
                     <div className="flex items-center text-sm">
                       <TruckIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                      <span>Assigned Trucks: {operator.assignedTruckIds.length}</span>
+                      <span>Assigned Trucks: {operator.assignedTrucks.length}</span>
                     </div>
                     <div className="mt-2">
                       <h3 className="font-semibold text-sm mb-1 flex items-center">
@@ -369,14 +300,14 @@ const OperatorSelection: React.FC = () => {
           <DialogHeader>
             <DialogTitle>Auto-Assign Wizard - Step {wizardStep}</DialogTitle>
             <DialogDescription>
-              {wizardStep === 1 && "Select a shift and planning day to run the auto-assignment for."}
+              {wizardStep === 1 && "Select a shift to run the auto-assignment for."}
               {wizardStep === 2 && "Review the proposed assignments. You can reject individual assignments before confirming."}
             </DialogDescription>
-          </DialogHeader>
+          </DialogHeader> {/* Corrected: Removed duplicate DialogDescription closing tag */}
 
           {wizardStep === 1 && (
             <div className="flex flex-col items-center justify-center py-8 space-y-4">
-              <h3 className="text-lg font-semibold">Choose Shift and Planning Day for Assignment</h3>
+              <h3 className="text-lg font-semibold">Choose Shift for Assignment</h3>
               <Select onValueChange={(value: Shift) => setSelectedShiftForWizard(value)} value={selectedShiftForWizard || ''}>
                 <SelectTrigger className="w-[200px]">
                   <CalendarDaysIcon className="mr-2 h-4 w-4" />
@@ -387,13 +318,7 @@ const OperatorSelection: React.FC = () => {
                   <SelectItem value="Late">Late Shift</SelectItem>
                 </SelectContent>
               </Select>
-              <Input
-                type="date"
-                value={format(planningDateForWizard, 'yyyy-MM-dd')}
-                onChange={(e) => setPlanningDateForWizard(parseISO(e.target.value))}
-                className="w-[200px]"
-              />
-              <Button onClick={generateProposals} disabled={!selectedShiftForWizard || !planningDateForWizard}>
+              <Button onClick={generateProposals} disabled={!selectedShiftForWizard}>
                 Generate Proposals
               </Button>
             </div>
@@ -422,7 +347,7 @@ const OperatorSelection: React.FC = () => {
                           <TableRow key={proposal.truck.id} className={proposal.rejected ? 'bg-red-50/50 opacity-70' : ''}>
                             <TableCell className="font-medium">{proposal.truck.chassisNumber}</TableCell>
                             <TableCell>{proposal.truck.repairType}</TableCell>
-                            <TableCell>{(calculateRemainingRepairTime(proposal.truck)).toFixed(2)} hrs</TableCell>
+                            <TableCell>{(proposal.truck.repairTimeEstimate).toFixed(2)} hrs</TableCell>
                             <TableCell>{getPriorityScore(proposal.truck).totalScore}</TableCell>
                             <TableCell>{proposal.operator.name}</TableCell>
                             <TableCell>{proposal.operatorAvailableHoursBefore.toFixed(1)} hrs</TableCell>
@@ -449,7 +374,7 @@ const OperatorSelection: React.FC = () => {
                     </div>
                   </>
                 ) : (
-                  <p className="text-muted-foreground text-center py-8">No suitable assignments found for this shift and planning day.</p>
+                  <p className="text-muted-foreground text-center py-8">No suitable assignments found for this shift.</p>
                 )}
               </ScrollArea>
               <DialogFooter className="mt-4 flex justify-between">
