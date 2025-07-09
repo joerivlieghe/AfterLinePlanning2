@@ -1,47 +1,51 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { TruckIcon, UsersIcon, SearchIcon, BarChart3Icon, LayoutDashboardIcon } from 'lucide-react'; // Added LayoutDashboardIcon
+import { Link, useLocation } from 'react-router-dom';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { HomeIcon, UsersIcon, TruckIcon, BarChart2Icon, SettingsIcon, LayoutDashboardIcon } from 'lucide-react';
 
 const Header: React.FC = () => {
+  const location = useLocation();
+
+  const navItems = [
+    { name: 'Dashboard', href: '/', icon: HomeIcon },
+    { name: 'Operators', href: '/operators', icon: UsersIcon },
+    { name: 'Truck Search', href: '/truck-search', icon: TruckIcon },
+    { name: 'Reports', href: '/reports', icon: BarChart2Icon },
+    { name: 'Alternative Dashboard', href: '/alternative-dashboard', icon: LayoutDashboardIcon },
+    { name: 'Admin', href: '/admin', icon: SettingsIcon }, // New Admin link
+  ];
+
   return (
-    <header className="bg-gradient-to-r from-blue-700 to-blue-900 text-white shadow-lg p-4">
+    <header className="bg-gradient-to-r from-blue-600 to-purple-700 text-white shadow-lg py-4 px-6">
       <div className="container mx-auto flex justify-between items-center">
-        <Link to="/" className="flex items-center space-x-2">
-          <TruckIcon className="h-8 w-8 text-blue-300" />
-          <span className="text-2xl font-bold tracking-tight">AfterLine Planning</span>
+        <Link to="/" className="text-3xl font-bold tracking-tight flex items-center">
+          <img src="https://images.pexels.com/photos/105827/pexels-photo-105827.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=1" alt="Logo" className="h-10 w-10 rounded-full mr-3 object-cover" />
+          AfterLine Planning
         </Link>
         <nav>
           <ul className="flex space-x-6">
-            <li>
-              <Link to="/" className="flex items-center text-blue-100 hover:text-white transition-colors duration-200">
-                <TruckIcon className="h-5 w-5 mr-1" />
-                Dashboard
-              </Link>
-            </li>
-            <li>
-              <Link to="/alternative-dashboard" className="flex items-center text-blue-100 hover:text-white transition-colors duration-200">
-                <LayoutDashboardIcon className="h-5 w-5 mr-1" />
-                Alt Dashboard
-              </Link>
-            </li>
-            <li>
-              <Link to="/operators" className="flex items-center text-blue-100 hover:text-white transition-colors duration-200">
-                <UsersIcon className="h-5 w-5 mr-1" />
-                Operators
-              </Link>
-            </li>
-            <li>
-              <Link to="/truck-search" className="flex items-center text-blue-100 hover:text-white transition-colors duration-200">
-                <SearchIcon className="h-5 w-5 mr-1" />
-                Truck Search
-              </Link>
-            </li>
-            <li>
-              <Link to="/reports" className="flex items-center text-blue-100 hover:text-white transition-colors duration-200">
-                <BarChart3Icon className="h-5 w-5 mr-1" />
-                Reports
-              </Link>
-            </li>
+            {navItems.map((item) => {
+              const isActive = location.pathname === item.href;
+              const Icon = item.icon;
+              return (
+                <li key={item.name}>
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className={cn(
+                      "text-white hover:bg-white hover:text-blue-700 transition-colors duration-200",
+                      isActive && "bg-white text-blue-700 font-semibold"
+                    )}
+                  >
+                    <Link to={item.href} className="flex items-center">
+                      <Icon className="mr-2 h-5 w-5" />
+                      {item.name}
+                    </Link>
+                  </Button>
+                </li>
+              );
+            })}
           </ul>
         </nav>
       </div>

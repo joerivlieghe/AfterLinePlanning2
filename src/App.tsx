@@ -7,7 +7,8 @@ import Header from './components/layout/Header';
 import TruckSearch from './pages/TruckSearch';
 import OperatorSelection from './pages/OperatorSelection';
 import Reports from './pages/Reports';
-import AlternativeDashboard from './pages/AlternativeDashboard'; // Import the new AlternativeDashboard component
+import AlternativeDashboard from './pages/AlternativeDashboard';
+import AdminPage from './pages/AdminPage'; // Import the new AdminPage component
 
 const App: React.FC = () => {
   return (
@@ -21,7 +22,8 @@ const App: React.FC = () => {
           <Route path="/trucks/:truckId" element={<TruckDetail />} />
           <Route path="/truck-search" element={<TruckSearch />} />
           <Route path="/reports" element={<Reports />} />
-          <Route path="/alternative-dashboard" element={<AlternativeDashboard />} /> {/* New route for Alternative Dashboard */}
+          <Route path="/alternative-dashboard" element={<AlternativeDashboard />} />
+          <Route path="/admin" element={<AdminPage />} /> {/* New route for Admin Page */}
         </Routes>
       </main>
     </div>

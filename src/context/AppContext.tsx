@@ -15,6 +15,9 @@ interface AppContextType {
   unassignOperatorFromTruck: (truckId: string, operatorId: string) => void;
   assignOperatorToTruck: (truckId: string, operatorId: string) => void;
   markTruckComplete: (truckId: string) => void;
+  addOperator: (newOperator: Operator) => void; // New: Add operator
+  updateOperator: (operatorId: string, updates: Partial<Operator>) => void; // New: Update operator
+  deleteOperator: (operatorId: string) => void; // New: Delete operator
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -174,6 +177,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   }, []);
 
+  const addOperator = useCallback((newOperator: Operator) => {
+    setOperators(prevOperators => [...prevOperators, newOperator]);
+  }, []);
+
+  const updateOperator = useCallback((operatorId: string, updates: Partial<Operator>) => {
+    setOperators(prevOperators =>
+      prevOperators.map(op =>
+        op.id === operatorId ? { ...op, ...updates } : op
+      )
+    );
+  }, []);
+
+  const deleteOperator = useCallback((operatorId: string) => {
+    setOperators(prevOperators => prevOperators.filter(op => op.id !== operatorId));
+    // Also unassign this operator from any trucks they might be assigned to
+    setTrucks(prevTrucks => prevTrucks.map(truck => ({
+      ...truck,
+      assignedOperatorIds: truck.assignedOperatorIds.filter(id => id !== operatorId),
+    })));
+  }, []);
+
   const contextValue = useMemo(() => ({
     trucks,
     setTrucks,
@@ -187,6 +211,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unassignOperatorFromTruck,
     assignOperatorToTruck,
     markTruckComplete,
+    addOperator,
+    updateOperator,
+    deleteOperator,
   }), [
     trucks,
     setTrucks,
@@ -200,6 +227,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unassignOperatorFromTruck,
     assignOperatorToTruck,
     markTruckComplete,
+    addOperator,
+    updateOperator,
+    deleteOperator,
   ]);
 
   return (
