@@ -2,18 +2,22 @@ import React from 'react';
 import { Operator } from '@/types';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours } from '@/lib/data';
-import { WrenchIcon, ClockIcon, GaugeIcon, TruckIcon, InfoIcon, UsersIcon } from 'lucide-react'; // Added UsersIcon
+import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, calculateRemainingRepairTime } from '@/lib/data';
+import { WrenchIcon, ClockIcon, GaugeIcon, TruckIcon, InfoIcon, UsersIcon } from 'lucide-react';
 
 interface OperatorCardProps {
   operator: Operator;
   onClick?: (operatorId: string) => void;
   isSelected?: boolean;
+  allTrucks: any[]; // Pass all trucks to calculate available hours
 }
 
-const OperatorCard: React.FC<OperatorCardProps> = ({ operator, onClick, isSelected }) => {
-  const availableHours = getAvailableShiftHours(operator);
-  const assignedRepairTime = operator.assignedTrucks.reduce((sum, truck) => sum + truck.repairTimeEstimate, 0);
+const OperatorCard: React.FC<OperatorCardProps> = ({ operator, onClick, isSelected, allTrucks }) => {
+  const availableHours = getAvailableShiftHours(operator, allTrucks);
+  const assignedRepairTime = operator.assignedTruckIds.reduce((sum: number, truckId: string) => {
+    const truck = allTrucks.find(t => t.id === truckId);
+    return sum + (truck ? calculateRemainingRepairTime(truck) : 0);
+  }, 0);
   const totalShiftHours = (operator.shiftEndTime.getTime() - operator.shiftStartTime.getTime()) / (1000 * 60 * 60);
   const occupancyRate = totalShiftHours > 0 ? (assignedRepairTime / totalShiftHours) : 0;
 
@@ -53,7 +57,7 @@ const OperatorCard: React.FC<OperatorCardProps> = ({ operator, onClick, isSelect
         </div>
         <div className="flex items-center text-sm">
           <TruckIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-          <span>Assigned Trucks: {operator.assignedTrucks.length}</span>
+          <span>Assigned Trucks: {operator.assignedTruckIds.length}</span>
         </div>
         <div className="mt-2">
           <h5 className="font-semibold text-sm mb-1 flex items-center">

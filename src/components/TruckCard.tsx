@@ -1,117 +1,127 @@
 import React from 'react';
-import { Truck } from '@/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Truck, Deviation, MissingPart, TruckStatus } from '@/types';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { getPriorityColor, getStatusColor, formatDate, getPriorityScore } from '@/lib/data';
-import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, ArrowRightIcon, StarIcon, ClockIcon } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { getPriorityColor, getStatusColor, getSeverityColor, getMissingPartStatusColor, formatDate, calculateRemainingRepairTime, getPriorityScore } from '@/lib/data';
+import { TruckIcon, WrenchIcon, PackageIcon, CalendarIcon, AlertCircleIcon, ClockIcon, InfoIcon, CheckCircleIcon, XCircleIcon, CodeIcon, UsersIcon } from 'lucide-react';
 
 interface TruckCardProps {
   truck: Truck;
-  onAssignClick?: (truckId: string) => void;
+  onClick?: (truckId: string) => void;
+  isSelected?: boolean;
+  showProjectCode?: boolean;
 }
 
-const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
-  const navigate = useNavigate();
-  const priorityScore = getPriorityScore(truck).totalScore;
-  
-  const openDeviations = truck.deviations.filter(dev => !dev.completed).length;
-  const pendingMissingParts = truck.missingParts.filter(mp => mp.status !== 'Available' && !mp.completed).length;
-
-  const handleCardClick = () => {
-    navigate(`/trucks/${truck.id}`);
-  };
-
-  const showAssignButton = truck.status === 'Ready to Plan' || truck.status === 'Overdue - Ready to Plan';
+const TruckCard: React.FC<TruckCardProps> = ({ truck, onClick, isSelected, showProjectCode = false }) => {
+  const priorityScore = truck.status === 'Overdue - Not Ready' || truck.status === 'Not Ready' ? 0 : getPriorityScore(truck).totalScore;
+  const remainingRepairTime = calculateRemainingRepairTime(truck);
 
   return (
-    <Card className="w-full cursor-pointer hover:shadow-lg transition-shadow duration-200" onClick={handleCardClick}>
-      <CardHeader className="pb-2">
+    <Card
+      className={`w-full bg-white shadow-lg rounded-lg overflow-hidden transform transition-transform hover:scale-[1.02] hover:shadow-xl cursor-pointer ${
+        isSelected ? 'border-2 border-blue-500 ring-2 ring-blue-500' : ''
+      }`}
+      onClick={() => onClick && onClick(truck.id)}
+    >
+      <CardHeader className="p-4 pb-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-semibold">{truck.chassisNumber}</CardTitle>
+          <CardTitle className="text-lg font-semibold text-gray-800 flex items-center">
+            <TruckIcon className="mr-2 h-5 w-5 text-primary" /> {truck.chassisNumber}
+          </CardTitle>
           <Badge className={getStatusColor(truck.status)}>{truck.status}</Badge>
         </div>
-        <CardDescription className="text-sm text-gray-600">Chassis: {truck.chassisNumber}</CardDescription>
+        <CardDescription className="text-sm text-gray-600">
+          {truck.repairType} - {truck.repairAreaNeeded}
+        </CardDescription>
       </CardHeader>
-      <CardContent className="text-sm space-y-2">
-        <div className="flex items-center justify-between">
+      <CardContent className="p-4 pt-0 space-y-2 text-gray-700">
+        <div className="flex items-center justify-between text-sm">
           <div className="flex items-center">
             <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
             <span>Delivery: {formatDate(truck.deliveryDate)}</span>
           </div>
-          <Badge className={getPriorityColor(priorityScore)}><StarIcon className="inline-block h-3 w-3 mr-1" /> {priorityScore}</Badge>
+          <Badge className={getPriorityColor(priorityScore)}>
+            P-Score: {priorityScore}
+          </Badge>
         </div>
-        <div className="flex items-center">
-          <WrenchIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-          <span>Repair Type: {truck.repairType}</span>
+        <div className="flex items-center text-sm">
+          <ClockIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+          <span>Remaining Repair Time: <span className="font-semibold">{remainingRepairTime.toFixed(1)} hrs</span></span>
         </div>
-        {truck.projectCode && (
-          <div className="flex items-center">
-            <InfoIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>Project Code: {truck.projectCode}</span>
+        <div className="flex items-center text-sm">
+          {truck.okToDrive ? (
+            <CheckCircleIcon className="mr-2 h-4 w-4 text-green-500" />
+          ) : (
+            <XCircleIcon className="mr-2 h-4 w-4 text-red-500" />
+          )}
+          <span>{truck.okToDrive ? 'OK to Drive' : 'Not OK to Drive'}</span>
+        </div>
+        <div className="flex items-center text-sm">
+          <InfoIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+          <span>Customer Priority: <span className="font-semibold">{truck.customerPriority}</span></span>
+        </div>
+        {showProjectCode && truck.projectCode && (
+          <div className="flex items-center text-sm">
+            <CodeIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+            <span>Project Code: <span className="font-semibold">{truck.projectCode}</span></span>
           </div>
         )}
-        
-        {truck.deviationTimeEstimate !== undefined && truck.deviationTimeEstimate > 0 && (
-          <div className="flex items-center text-yellow-700">
-            <ClockIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>Deviations Est. Time: {truck.deviationTimeEstimate} hrs</span>
-          </div>
-        )}
-        {truck.missingPartsTimeEstimate !== undefined && truck.missingPartsTimeEstimate > 0 && (
-          <div className="flex items-center text-blue-700">
-            <ClockIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>Missing Parts Est. Time: {truck.missingPartsTimeEstimate} hrs</span>
-          </div>
-        )}
-        {truck.customerAdaptationWork && truck.customerAdaptationTimeEstimate !== undefined && truck.customerAdaptationTimeEstimate > 0 && (
-          <div className="flex items-center text-purple-700">
-            <ClockIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>CA Work Est. Time: {truck.customerAdaptationTimeEstimate} hrs</span>
-          </div>
-        )}
-        {truck.repairTimeEstimate > 0 && (
-          <div className="flex items-center font-semibold text-gray-800">
-            <ClockIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>Total Est. Repair Time: {truck.repairTimeEstimate} hrs</span>
+        {truck.assignedOperatorIds.length > 0 && (
+          <div className="flex items-center text-sm">
+            <UsersIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+            <span>Assigned Operators: {truck.assignedOperatorIds.length}</span>
           </div>
         )}
 
-        {openDeviations > 0 && (
-          <div className="flex items-center text-red-600">
-            <WrenchIcon className="mr-2 h-4 w-4" />
-            <span>{openDeviations} Open Deviation{openDeviations > 1 ? 's' : ''}</span>
+        {truck.deviations.filter(d => !d.completed).length > 0 && (
+          <div className="mt-2">
+            <h3 className="font-semibold text-sm mb-1 flex items-center">
+              <AlertCircleIcon className="mr-2 h-4 w-4" /> Deviations ({truck.deviations.filter(d => !d.completed).length}):
+            </h3>
+            <ul className="text-xs space-y-1">
+              {truck.deviations.filter(d => !d.completed).slice(0, 2).map((dev: Deviation) => (
+                <li key={dev.id} className="flex items-center">
+                  <span className={`mr-1 ${getSeverityColor(dev.severity)}`}>●</span>
+                  {dev.description} ({dev.timeEstimate || 0}h)
+                </li>
+              ))}
+              {truck.deviations.filter(d => !d.completed).length > 2 && (
+                <li className="text-xs text-muted-foreground">
+                  +{truck.deviations.filter(d => !d.completed).length - 2} more deviations
+                </li>
+              )}
+            </ul>
           </div>
         )}
-        {pendingMissingParts > 0 && (
-          <div className="flex items-center text-orange-600">
-            <PackageIcon className="mr-2 h-4 w-4" />
-            <span>{pendingMissingParts} Pending Part{pendingMissingParts > 1 ? 's' : ''}</span>
+
+        {truck.missingParts.filter(mp => !mp.completed).length > 0 && (
+          <div className="mt-2">
+            <h3 className="font-semibold text-sm mb-1 flex items-center">
+              <PackageIcon className="mr-2 h-4 w-4" /> Missing Parts ({truck.missingParts.filter(mp => !mp.completed).length}):
+            </h3>
+            <ul className="text-xs space-y-1">
+              {truck.missingParts.filter(mp => !mp.completed).slice(0, 2).map((part: MissingPart) => (
+                <li key={part.id} className="flex items-center">
+                  <span className={`mr-1 ${getMissingPartStatusColor(part.status)} rounded-full w-2 h-2`}></span>
+                  {part.name} ({part.status})
+                </li>
+              ))}
+              {truck.missingParts.filter(mp => !mp.completed).length > 2 && (
+                <li className="text-xs text-muted-foreground">
+                  +{truck.missingParts.filter(mp => !mp.completed).length - 2} more parts
+                </li>
+              )}
+            </ul>
           </div>
         )}
-        {truck.customerAdaptationWork && (
-          <div className="flex items-center text-purple-600">
-            <InfoIcon className="mr-2 h-4 w-4" />
-            <span>Customer Adaptation</span>
+
+        {truck.customerAdaptationWork && !truck.customerAdaptationCompleted && (
+          <div className="mt-2">
+            <h3 className="font-semibold text-sm mb-1 flex items-center">
+              <WrenchIcon className="mr-2 h-4 w-4" /> Customer Adaptation:
+            </h3>
+            <p className="text-xs">{truck.customerAdaptationWork} ({truck.customerAdaptationTimeEstimate || 0}h)</p>
           </div>
-        )}
-        {truck.assignedOperatorId && (
-          <div className="flex items-center text-blue-600">
-            <InfoIcon className="mr-2 h-4 w-4" />
-            <span>Assigned</span>
-          </div>
-        )}
-        {showAssignButton && onAssignClick && (
-          <Button
-            className="w-full mt-3"
-            onClick={(e) => {
-              e.stopPropagation(); // Prevent card click from navigating
-              onAssignClick(truck.id);
-            }}
-          >
-            Assign to Operator <ArrowRightIcon className="ml-2 h-4 w-4" />
-          </Button>
         )}
       </CardContent>
     </Card>

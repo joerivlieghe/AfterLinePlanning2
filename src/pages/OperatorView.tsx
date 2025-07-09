@@ -1,15 +1,40 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppContext } from '@/context/AppContext';
+import { Operator, Truck, Deviation, MissingPart } from '@/types';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useToast } from '@/hooks/use-toast';
-import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, formatDate, getPriorityColor, getSeverityColor, getMissingPartStatusColor, getPriorityScore } from '@/lib/data';
-import { WrenchIcon, ClockIcon, GaugeIcon, TruckIcon, ArrowLeftIcon, InfoIcon, PackageIcon, CalendarIcon, CarIcon, UsersIcon, XCircleIcon, CheckCircleIcon } from 'lucide-react';
+import {
+  getStatusColor,
+  getEfficiencyColor,
+  formatTime,
+  formatDate,
+  getSeverityColor,
+  getMissingPartStatusColor,
+  calculateRemainingRepairTime,
+  getAvailableShiftHours
+} from '@/lib/data';
+import {
+  UsersIcon,
+  ClockIcon,
+  GaugeIcon,
+  WrenchIcon,
+  InfoIcon,
+  TruckIcon,
+  ArrowLeftIcon,
+  AlertCircleIcon,
+  PackageIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  HourglassIcon,
+  ClipboardCheckIcon
+} from 'lucide-react';
 
 const OperatorView: React.FC = () => {
   const { operatorId } = useParams<{ operatorId: string }>();
@@ -23,94 +48,112 @@ const OperatorView: React.FC = () => {
     unassignOperatorFromTruck,
     markTruckComplete,
   } = useAppContext();
-  const { toast } = useToast();
 
-  // Debugging logs
-  console.log('OperatorView: operatorId from useParams:', operatorId);
-  console.log('OperatorView: operators from AppContext:', operators);
+  const operator = useMemo(() => operators.find(op => op.id === operatorId), [operators, operatorId]);
 
-  const operator = operators.find((op) => op.id === operatorId);
+  const assignedTrucks = useMemo(() => {
+    if (!operator) return [];
+    return trucks.filter(truck => operator.assignedTruckIds.includes(truck.id));
+  }, [operator, trucks]);
+
+  const [isConfirmUnassignOpen, setIsConfirmUnassignOpen] = useState(false);
+  const [truckToUnassign, setTruckToUnassign] = useState<Truck | null>(null);
+  const [isConfirmCompleteOpen, setIsConfirmCompleteOpen] = useState(false);
+  const [truckToComplete, setTruckToComplete] = useState<Truck | null>(null);
+  const [completedByName, setCompletedByName] = useState('');
 
   if (!operator) {
-    console.log('OperatorView: Operator not found for ID:', operatorId);
     return (
       <div className="p-6 text-center text-red-500">
-        <h1 className="text-3xl font-bold mb-4">Operator Not Found</h1>
-        <Button onClick={() => navigate('/operators')}>Back to Operator Selection</Button>
+        <h1 className="text-2xl font-bold">Operator Not Found</h1>
+        <Button onClick={() => navigate('/operators')} className="mt-4">
+          Back to Operators
+        </Button>
       </div>
     );
   }
 
+  const availableHours = getAvailableShiftHours(operator, trucks);
+  const assignedRepairTime = assignedTrucks.reduce((sum: number, truck: Truck) => sum + calculateRemainingRepairTime(truck), 0);
+  const totalShiftHours = (operator.shiftEndTime.getTime() - operator.shiftStartTime.getTime()) / (1000 * 60 * 60);
+  const occupancyRate = totalShiftHours > 0 ? (assignedRepairTime / totalShiftHours) : 0;
+
   const handleMarkDeviationComplete = (truckId: string, deviationId: string) => {
-    const success = markDeviationComplete(truckId, deviationId, operator.name);
+    if (completedByName.trim() === '') {
+      alert('Please enter your name to mark as complete.');
+      return;
+    }
+    const success = markDeviationComplete(truckId, deviationId, completedByName);
     if (success) {
-      toast({
-        title: "Deviation Completed",
-        description: `Deviation ${deviationId} for truck ${truckId} marked complete.`,
-      });
-    } else {
-      toast({
-        title: "Action Failed",
-        description: "Cannot complete deviation without an assigned operator.",
-        variant: "destructive",
-      });
+      // Optionally show a toast or notification
     }
   };
 
   const handleMarkMissingPartComplete = (truckId: string, partId: string) => {
-    markMissingPartComplete(truckId, partId, operator.name);
-    toast({
-      title: "Missing Part Completed",
-      description: `Missing part ${partId} for truck ${truckId} marked complete.`,
-    });
+    if (completedByName.trim() === '') {
+      alert('Please enter your name to mark as complete.');
+      return;
+    }
+    markMissingPartComplete(truckId, partId, completedByName);
   };
 
   const handleMarkCustomerAdaptationComplete = (truckId: string) => {
-    markCustomerAdaptationComplete(truckId, operator.name);
-    toast({
-      title: "Customer Adaptation Completed",
-      description: `Customer adaptation work for truck ${truckId} marked complete.`,
-    });
+    if (completedByName.trim() === '') {
+      alert('Please enter your name to mark as complete.');
+      return;
+    }
+    markCustomerAdaptationComplete(truckId, completedByName);
   };
 
-  const handleFinishTruck = (truckId: string) => {
-    markTruckComplete(truckId);
-    toast({
-      title: "Truck Marked Complete",
-      description: `Truck ${truckId} has been moved to the Completed column.`,
-    });
+  const openUnassignConfirm = (truck: Truck) => {
+    setTruckToUnassign(truck);
+    setIsConfirmUnassignOpen(true);
   };
 
-  const handleUnassignTruck = (truckId: string) => {
-    unassignOperatorFromTruck(truckId);
-    toast({
-      title: "Truck Unassigned",
-      description: `Truck ${truckId} has been unassigned from ${operator.name}.`,
-    });
+  const confirmUnassign = () => {
+    if (truckToUnassign && operator) {
+      unassignOperatorFromTruck(truckToUnassign.id, operator.id);
+      setIsConfirmUnassignOpen(false);
+      setTruckToUnassign(null);
+    }
   };
 
-  const availableHours = getAvailableShiftHours(operator);
+  const openCompleteConfirm = (truck: Truck) => {
+    setTruckToComplete(truck);
+    setIsConfirmCompleteOpen(true);
+  };
+
+  const confirmComplete = () => {
+    if (truckToComplete) {
+      markTruckComplete(truckToComplete.id);
+      setIsConfirmCompleteOpen(false);
+      setTruckToComplete(null);
+    }
+  };
 
   return (
-    <div className="p-6">
-      <Button variant="outline" onClick={() => navigate('/operators')} className="mb-6 flex items-center">
-        <ArrowLeftIcon className="mr-2 h-4 w-4" /> Back to Operators
-      </Button>
+    <div className="p-6 flex flex-col h-screen">
+      <div className="flex items-center mb-6">
+        <Button variant="ghost" onClick={() => navigate('/operators')} className="mr-4">
+          <ArrowLeftIcon className="h-5 w-5" />
+        </Button>
+        <h1 className="text-3xl font-bold text-gray-900">Operator: {operator.name}</h1>
+      </div>
 
-      <h1 className="text-3xl font-bold mb-6 text-gray-900">Operator: {operator.name}</h1>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Operator Details Card */}
-        <Card className="lg:col-span-1 bg-white shadow-lg rounded-lg p-6">
-          <CardHeader className="p-0 pb-4">
-            <CardTitle className="text-2xl font-semibold text-gray-800 flex items-center">
-              <UsersIcon className="mr-3 h-6 w-6 text-primary" /> {operator.name}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <Card className="lg:col-span-1 bg-white shadow-lg rounded-lg">
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-xl font-semibold flex items-center">
+              <UsersIcon className="mr-2 h-6 w-6 text-primary" /> Operator Details
             </CardTitle>
             <CardDescription className="text-sm text-gray-600">ID: {operator.id}</CardDescription>
           </CardHeader>
-          <CardContent className="p-0 space-y-3 text-gray-700">
+          <CardContent className="p-4 pt-0 space-y-2 text-gray-700">
             <div className="flex items-center text-base">
               <Badge className={getStatusColor(operator.status)}>{operator.status}</Badge>
+              <Badge variant="outline" className="ml-2 text-sm px-2 py-0.5">
+                {operator.shift} Shift
+              </Badge>
             </div>
             <div className="flex items-center text-base">
               <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
@@ -118,19 +161,23 @@ const OperatorView: React.FC = () => {
             </div>
             <div className="flex items-center text-base">
               <InfoIcon className="mr-2 h-5 w-5 text-muted-foreground" />
-              <span>Available Hours: <span className="font-semibold text-lg">{availableHours.toFixed(1)} hrs</span></span>
+              <span>Available Hours: <span className="font-semibold">{availableHours.toFixed(1)} hrs</span></span>
             </div>
             <div className="flex items-center text-base">
               <GaugeIcon className="mr-2 h-5 w-5 text-muted-foreground" />
-              <span>Efficiency: <span className={getEfficiencyColor(operator.efficiency)}>{(operator.efficiency * 100).toFixed(0)}%</span></span>
+              <span>Occupancy: <span className={getEfficiencyColor(occupancyRate)}>{(occupancyRate * 100).toFixed(0)}%</span></span>
+            </div>
+            <div className="flex items-center text-base">
+              <TruckIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+              <span>Assigned Trucks: {operator.assignedTruckIds.length}</span>
             </div>
             <div className="mt-4">
-              <h3 className="font-semibold text-lg mb-2 flex items-center">
+              <h3 className="font-semibold text-base mb-2 flex items-center">
                 <WrenchIcon className="mr-2 h-5 w-5" /> Competencies:
               </h3>
               <div className="flex flex-wrap gap-2">
                 {operator.competencies.map((comp, index) => (
-                  <Badge key={index} variant="secondary" className="text-sm px-3 py-1">
+                  <Badge key={index} variant="secondary" className="text-sm">
                     {comp}
                   </Badge>
                 ))}
@@ -139,156 +186,179 @@ const OperatorView: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Assigned Work Queue */}
-        <div className="lg:col-span-2 bg-gray-50 p-6 rounded-lg shadow-md">
-          <h2 className="text-2xl font-semibold mb-4 text-gray-800 flex items-center">
-            <TruckIcon className="mr-3 h-6 w-6 text-primary" /> Assigned Work Queue
-            <Badge className="ml-2 bg-blue-500 text-white">{operator.assignedTrucks.length}</Badge>
-          </h2>
-          <ScrollArea className="h-[calc(100vh-250px)] pr-4">
-            <div className="space-y-6">
-              {operator.assignedTrucks.length > 0 ? (
-                operator.assignedTrucks.map((truck) => {
-                  const truckPriorityBreakdown = getPriorityScore(truck);
-                  const truckPriorityScore = truckPriorityBreakdown.totalScore;
-                  const allDeviationsCompleted = truck.deviations.every(dev => dev.completed);
-                  const allMissingPartsCompleted = truck.missingParts.every(mp => mp.completed);
-                  const customerAdaptationWorkExists = truck.customerAdaptationWork !== null;
-                  const customerAdaptationIsCompleted = truck.customerAdaptationCompleted;
-                  const canFinishTruck = allDeviationsCompleted && allMissingPartsCompleted && (!customerAdaptationWorkExists || customerAdaptationIsCompleted);
-
-                  return (
-                    <Card key={truck.id} className="bg-white shadow-md rounded-lg p-4">
-                      <CardHeader className="p-0 pb-2">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-xl font-semibold">{truck.chassisNumber}</CardTitle>
-                          <Badge className={getStatusColor(truck.status)}>{truck.status}</Badge>
-                        </div>
-                        <CardDescription className="text-sm text-gray-600">
-                          Delivery: {formatDate(truck.deliveryDate)} | Priority: <Badge className={getPriorityColor(truckPriorityScore)}>{truckPriorityScore}</Badge>
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="p-0 pt-2 space-y-2 text-gray-700">
-                        <p className="flex items-center text-sm">
-                          <WrenchIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                          Repair Type: {truck.repairType} (Est: {truck.repairTimeEstimate} hrs)
-                        </p>
-                        <p className="flex items-center text-sm">
-                          <InfoIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                          Repair Area: {truck.repairAreaNeeded}
-                        </p>
-                        {/* Display missing parts status and number of open deviations */}
-                        <p className="flex items-center text-sm">
-                          <PackageIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                          Missing Parts: {truck.missingParts.length > 0 ? truck.missingParts.filter(p => p.status !== 'Available' && !p.completed).length > 0 ? `${truck.missingParts.filter(p => p.status !== 'Available' && !p.completed).length} pending` : 'All available' : 'None'}
-                        </p>
-                        <p className="flex items-center text-sm">
-                          <WrenchIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                          Deviations: {truck.deviations.filter(dev => !dev.completed).length} open
-                        </p>
-
-                        {truck.customerAdaptationWork && (
-                          <div className="mt-3">
-                            <h4 className="font-semibold text-sm mb-1 flex items-center">
-                              <CarIcon className="mr-2 h-4 w-4" /> Customer Adaptation:
-                            </h4>
-                            <div className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`customer-adaptation-${truck.id}`}
-                                checked={truck.customerAdaptationCompleted}
-                                onCheckedChange={() => handleMarkCustomerAdaptationComplete(truck.id)}
-                                disabled={truck.customerAdaptationCompleted}
-                              />
-                              <Label htmlFor={`customer-adaptation-${truck.id}`} className="text-sm font-normal">
-                                {truck.customerAdaptationWork}
-                                {truck.customerAdaptationCompleted && (
-                                  <span className="ml-2 text-green-600">(Completed by {truck.customerAdaptationCompletedBy} on {formatDate(truck.customerAdaptationCompletedAt!)})</span>
-                                )}
-                              </Label>
-                            </div>
-                          </div>
-                        )}
-
-                        {truck.deviations.length > 0 && (
-                          <div className="mt-3">
-                            <h4 className="font-semibold text-sm mb-1 flex items-center">
-                              <WrenchIcon className="mr-2 h-4 w-4" /> Deviations:
-                            </h4>
-                            <ul className="space-y-2">
-                              {truck.deviations.map((dev) => (
-                                <li key={dev.id} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`dev-${dev.id}`}
-                                    checked={dev.completed}
-                                    onCheckedChange={() => handleMarkDeviationComplete(truck.id, dev.id)}
-                                    disabled={dev.completed}
-                                  />
-                                  <Label htmlFor={`dev-${dev.id}`} className={`text-sm font-normal ${getSeverityColor(dev.severity)}`}>
-                                    {dev.severity}: {dev.description}
-                                    {dev.completed && <span className="ml-2 text-green-600">(Completed by {dev.completedBy} on {formatDate(dev.completedAt!)})</span>}
-                                  </Label>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {truck.missingParts.length > 0 && (
-                          <div className="mt-3">
-                            <h4 className="font-semibold text-sm mb-1 flex items-center">
-                              <PackageIcon className="mr-2 h-4 w-4" /> Missing Parts:
-                            </h4>
-                            <ul className="space-y-2">
-                              {truck.missingParts.map((part) => (
-                                <li key={part.id} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`part-${part.id}`}
-                                    checked={part.completed}
-                                    onCheckedChange={() => handleMarkMissingPartComplete(truck.id, part.id)}
-                                    disabled={part.completed || part.status !== 'Available'}
-                                  />
-                                  <Label htmlFor={`part-${part.id}`} className="text-sm font-normal">
-                                    {part.name} - <Badge className={getMissingPartStatusColor(part.status)}>{part.status}</Badge>
-                                    {part.status !== 'Available' && (
-                                      <span className="ml-2 text-xs text-gray-500">
-                                        (Est. Delivery: {formatDate(part.promisedDeliveryDate)})
-                                      </span>
-                                    )}
-                                    {part.completed && <span className="ml-2 text-green-600">(Completed by {part.completedBy} on {formatDate(part.completedAt!)})</span>}
-                                  </Label>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        <div className="flex gap-2 mt-4">
-                          <Button
-                            className="flex-1 bg-green-600 text-white hover:bg-green-700"
-                            onClick={() => handleFinishTruck(truck.id)}
-                            disabled={!canFinishTruck || truck.status === 'Completed'}
-                          >
-                            <CheckCircleIcon className="mr-2 h-4 w-4" /> Finish Truck
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="flex-1 text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700"
-                            onClick={() => handleUnassignTruck(truck.id)}
-                            disabled={truck.status === 'Completed'}
-                          >
-                            <XCircleIcon className="mr-2 h-4 w-4" /> Unassign
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })
-              ) : (
-                <p className="text-muted-foreground text-center py-12">This operator has no assigned trucks.</p>
-              )}
+        <Card className="lg:col-span-2 bg-white shadow-lg rounded-lg">
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-xl font-semibold flex items-center">
+              <ClipboardCheckIcon className="mr-2 h-6 w-6 text-primary" /> Mark Work Complete
+            </CardTitle>
+            <CardDescription className="text-sm text-gray-600">
+              Enter your name and mark deviations, missing parts, or customer adaptations as complete.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-4 pt-0 space-y-4">
+            <div>
+              <Label htmlFor="completedByName" className="mb-2 block">Your Name</Label>
+              <Input
+                id="completedByName"
+                type="text"
+                placeholder="Enter your name"
+                value={completedByName}
+                onChange={(e) => setCompletedByName(e.target.value)}
+                className="w-full"
+              />
             </div>
-          </ScrollArea>
-        </div>
+            <p className="text-sm text-muted-foreground">
+              This name will be recorded as the person who completed the task.
+            </p>
+          </CardContent>
+        </Card>
       </div>
+
+      <h2 className="text-2xl font-bold mb-4 text-gray-900">Assigned Trucks</h2>
+      <ScrollArea className="flex-1 pr-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {assignedTrucks.length > 0 ? (
+            assignedTrucks.map((truck) => (
+              <Card key={truck.id} className="bg-white shadow-md rounded-lg overflow-hidden">
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold">{truck.chassisNumber}</CardTitle>
+                    <Badge className={getStatusColor(truck.status)}>{truck.status}</Badge>
+                  </div>
+                  <CardDescription className="text-sm text-gray-600">{truck.repairType}</CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 pt-0 space-y-2 text-gray-700">
+                  <div className="flex items-center text-sm">
+                    <HourglassIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <span>Remaining: {calculateRemainingRepairTime(truck).toFixed(1)} hrs</span>
+                  </div>
+                  <div className="flex items-center text-sm">
+                    <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                    <span>Delivery: {formatDate(truck.deliveryDate)}</span>
+                  </div>
+
+                  {truck.deviations.filter(d => !d.completed).length > 0 && (
+                    <div className="mt-2">
+                      <h3 className="font-semibold text-sm mb-1 flex items-center">
+                        <AlertCircleIcon className="mr-2 h-4 w-4" /> Deviations:
+                      </h3>
+                      <ul className="text-xs space-y-1">
+                        {truck.deviations.filter(d => !d.completed).map((dev: Deviation) => (
+                          <li key={dev.id} className="flex items-center justify-between">
+                            <span className={`mr-1 ${getSeverityColor(dev.severity)}`}>●</span>
+                            {dev.description} ({dev.timeEstimate || 0}h)
+                            <Checkbox
+                              checked={dev.completed}
+                              onCheckedChange={() => handleMarkDeviationComplete(truck.id, dev.id)}
+                              className="ml-2"
+                              disabled={completedByName.trim() === ''}
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {truck.missingParts.filter(mp => !mp.completed).length > 0 && (
+                    <div className="mt-2">
+                      <h3 className="font-semibold text-sm mb-1 flex items-center">
+                        <PackageIcon className="mr-2 h-4 w-4" /> Missing Parts:
+                      </h3>
+                      <ul className="text-xs space-y-1">
+                        {truck.missingParts.filter(mp => !mp.completed).map((part: MissingPart) => (
+                          <li key={part.id} className="flex items-center justify-between">
+                            <span className={`mr-1 ${getMissingPartStatusColor(part.status)} rounded-full w-2 h-2`}></span>
+                            {part.name} ({part.status})
+                            <Checkbox
+                              checked={part.completed}
+                              onCheckedChange={() => handleMarkMissingPartComplete(truck.id, part.id)}
+                              className="ml-2"
+                              disabled={completedByName.trim() === ''}
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {truck.customerAdaptationWork && !truck.customerAdaptationCompleted && (
+                    <div className="mt-2">
+                      <h3 className="font-semibold text-sm mb-1 flex items-center">
+                        <WrenchIcon className="mr-2 h-4 w-4" /> Customer Adaptation:
+                      </h3>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs">{truck.customerAdaptationWork} ({truck.customerAdaptationTimeEstimate || 0}h)</p>
+                        <Checkbox
+                          checked={truck.customerAdaptationCompleted}
+                          onCheckedChange={() => handleMarkCustomerAdaptationComplete(truck.id)}
+                          className="ml-2"
+                          disabled={completedByName.trim() === ''}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between mt-4 space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openUnassignConfirm(truck)}
+                      className="flex-1"
+                    >
+                      Unassign
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => openCompleteConfirm(truck)}
+                      className="flex-1"
+                      disabled={calculateRemainingRepairTime(truck) > 0}
+                    >
+                      Mark Complete
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <p className="col-span-full text-center text-muted-foreground py-12">No trucks currently assigned to this operator.</p>
+          )}
+        </div>
+      </ScrollArea>
+
+      {/* Unassign Confirmation Dialog */}
+      <Dialog open={isConfirmUnassignOpen} onOpenChange={setIsConfirmUnassignOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Unassignment</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to unassign this operator from truck {truckToUnassign?.chassisNumber}?
+              This will free up the operator's time but the truck will remain in its current state.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsConfirmUnassignOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmUnassign}>Unassign</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark Complete Confirmation Dialog */}
+      <Dialog open={isConfirmCompleteOpen} onOpenChange={setIsConfirmCompleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Truck Completion</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to mark truck {truckToComplete?.chassisNumber} as COMPLETE?
+              This action will unassign all operators and set its status to 'Completed'.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsConfirmCompleteOpen(false)}>Cancel</Button>
+            <Button variant="default" onClick={confirmComplete}>Confirm Complete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
