@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppContext } from '@/context/AppContext';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
@@ -25,11 +25,22 @@ const OperatorView: React.FC = () => {
   } = useAppContext();
   const { toast } = useToast();
 
-  // Debugging logs
-  console.log('OperatorView: operatorId from useParams:', operatorId);
-  console.log('OperatorView: operators from AppContext:', operators);
+  // Use useMemo to ensure the operator object and its assignedTrucks are always up-to-date
+  const operator = useMemo(() => {
+    const foundOperator = operators.find((op) => op.id === operatorId);
+    if (!foundOperator) return null;
 
-  const operator = operators.find((op) => op.id === operatorId);
+    // Map assignedTrucks to their latest state from the global trucks array
+    const updatedAssignedTrucks = foundOperator.assignedTrucks.map(assignedTruck => {
+      const latestTruck = trucks.find(t => t.id === assignedTruck.id);
+      return latestTruck || assignedTruck; // Return latest truck state, or fallback if not found
+    });
+
+    return {
+      ...foundOperator,
+      assignedTrucks: updatedAssignedTrucks,
+    };
+  }, [operatorId, operators, trucks]); // Re-run memoization if operatorId, operators, or trucks change
 
   if (!operator) {
     console.log('OperatorView: Operator not found for ID:', operatorId);
@@ -82,7 +93,7 @@ const OperatorView: React.FC = () => {
   };
 
   const handleUnassignTruck = (truckId: string) => {
-    unassignOperatorFromTruck(truckId);
+    unassignOperatorFromTruck(truckId, operator.id); // Pass operator.id
     toast({
       title: "Truck Unassigned",
       description: `Truck ${truckId} has been unassigned from ${operator.name}.`,
