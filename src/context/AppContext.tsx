@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { Truck, Operator, Deviation, MissingPart } from '@/types';
-import { generateTrucks, generateOperators, getPriorityScore } from '@/lib/data';
+import { generateTrucks, generateOperators, getPriorityScore, calculateRemainingRepairTime, getAvailableShiftHours } from '@/lib/data';
 
 interface AppContextType {
   trucks: Truck[];
@@ -43,7 +43,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Filter out trucks that are 'Overdue - Not Ready' or 'Not Ready' as they have 0 priority score
     const eligibleTrucks = trucks.filter(truck =>
       truck.status !== 'Overdue - Not Ready' &&
-      truck.status !== 'Not Ready'
+      truck.status !== 'Not Ready' &&
+      calculateRemainingRepairTime(truck) > 0 // Only prioritize trucks with actual work remaining
     );
 
     return [...eligibleTrucks].sort((a, b) => {
@@ -74,7 +75,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return dev;
         });
-        return { ...truck, deviations: updatedDeviations };
+        const updatedTruck = { ...truck, deviations: updatedDeviations };
+        // Recalculate repairTimeEstimate based on remaining work
+        updatedTruck.repairTimeEstimate = calculateRemainingRepairTime(updatedTruck);
+        return updatedTruck;
       }
       return truck;
     }));
@@ -90,7 +94,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return part;
         });
-        return { ...truck, missingParts: updatedMissingParts };
+        const updatedTruck = { ...truck, missingParts: updatedMissingParts };
+        // Recalculate repairTimeEstimate based on remaining work
+        updatedTruck.repairTimeEstimate = calculateRemainingRepairTime(updatedTruck);
+        return updatedTruck;
       }
       return truck;
     }));
@@ -99,7 +106,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const markCustomerAdaptationComplete = useCallback((truckId: string, completedBy: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
       if (truck.id === truckId && truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
-        return { ...truck, customerAdaptationCompleted: true, customerAdaptationCompletedAt: new Date(), customerAdaptationCompletedBy: completedBy };
+        const updatedTruck = { ...truck, customerAdaptationCompleted: true, customerAdaptationCompletedAt: new Date(), customerAdaptationCompletedBy: completedBy };
+        // Recalculate repairTimeEstimate based on remaining work
+        updatedTruck.repairTimeEstimate = calculateRemainingRepairTime(updatedTruck);
+        return updatedTruck;
       }
       return truck;
     }));
@@ -114,11 +124,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setOperators(prevOperators => prevOperators.map(operator => {
       if (operator.id === operatorId) {
-        const updatedAssignedTrucks = operator.assignedTrucks.filter(truck => truck.id !== truckId);
+        const updatedAssignedTruckIds = operator.assignedTruckIds.filter(id => id !== truckId);
         return {
           ...operator,
-          assignedTrucks: updatedAssignedTrucks,
-          status: updatedAssignedTrucks.length === 0 ? 'Available' : 'Busy',
+          assignedTruckIds: updatedAssignedTruckIds,
+          status: updatedAssignedTruckIds.length === 0 ? 'Available' : 'Busy',
         };
       }
       return operator;
@@ -137,11 +147,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOperators(prevOperators =>
       prevOperators.map(operator => {
         if (operator.id === operatorId) {
-          const truckToAssign = trucks.find(t => t.id === truckId);
-          if (truckToAssign && !operator.assignedTrucks.some(t => t.id === truckId)) {
+          if (!operator.assignedTruckIds.includes(truckId)) {
             return {
               ...operator,
-              assignedTrucks: [...operator.assignedTrucks, truckToAssign],
+              assignedTruckIds: [...operator.assignedTruckIds, truckId],
               status: 'Busy',
             };
           }
@@ -149,7 +158,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return operator;
       })
     );
-  }, [trucks]);
+  }, []);
 
   const markTruckComplete = useCallback((truckId: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
@@ -158,17 +167,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         truck.assignedOperatorIds.forEach(operatorId => {
           setOperators(prevOperators => prevOperators.map(operator => {
             if (operator.id === operatorId) {
-              const updatedAssignedTrucks = operator.assignedTrucks.filter(t => t.id !== truckId);
+              const updatedAssignedTruckIds = operator.assignedTruckIds.filter(tId => tId !== truckId);
               return {
                 ...operator,
-                assignedTrucks: updatedAssignedTrucks,
-                status: updatedAssignedTrucks.length === 0 ? 'Available' : 'Busy',
+                assignedTruckIds: updatedAssignedTruckIds,
+                status: updatedAssignedTruckIds.length === 0 ? 'Available' : 'Busy',
               };
             }
             return operator;
           }));
         });
-        return { ...truck, status: 'Completed', assignedOperatorIds: [] };
+        return { ...truck, status: 'Completed', assignedOperatorIds: [], repairTimeEstimate: 0 }; // Set remaining time to 0
       }
       return truck;
     }));
