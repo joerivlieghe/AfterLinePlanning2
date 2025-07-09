@@ -11,12 +11,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, getPriorityScore, calculateRemainingRepairTime } from '@/lib/data';
 import { UsersIcon, ClockIcon, GaugeIcon, WrenchIcon, InfoIcon, TruckIcon, SearchIcon, FilterIcon, CalendarDaysIcon, CheckCircleIcon, XCircleIcon } from 'lucide-react';
-import { Operator, Shift, RepairType, ProposedAssignment } from '@/types';
+import { Operator, Truck, Shift, RepairType, ProposedAssignment } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { format, parseISO } from 'date-fns';
 
 const OperatorSelection: React.FC = () => {
-  const { operators, trucks, assignOperatorToTruck } = useAppContext();
+  const { operators, trucks, prioritizedTrucks, assignOperatorToTruck } = useAppContext();
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
@@ -140,7 +140,7 @@ const OperatorSelection: React.FC = () => {
 
     // Filter for trucks that are ready for assignment AND have no operators currently assigned
     // Also, ensure they are not 'Completed' or 'Ready to Finish' or 'Partial'
-    const unassignedPrioritizedTrucks = [...trucks].filter(truck =>
+    const unassignedPrioritizedTrucks = [...prioritizedTrucks].filter(truck =>
       truck.assignedOperatorIds.length === 0 && // Only consider trucks with no assigned operators for wizard
       truck.status !== 'Completed' && truck.status !== 'Ready to Finish' && truck.status !== 'Partial' &&
       calculateRemainingRepairTime(truck) > 0 // Only consider trucks with actual remaining work

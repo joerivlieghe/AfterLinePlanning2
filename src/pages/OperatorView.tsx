@@ -6,8 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import TruckCard from '@/components/TruckCard';
-import { getStatusColor, getEfficiencyColor, formatTime } from '@/lib/data';
-import { ArrowLeftIcon, UserIcon, WrenchIcon, ClockIcon, InfoIcon, TruckIcon } from 'lucide-react';
+import { getStatusColor, getEfficiencyColor, formatTime, formatDate } from '@/lib/data';
+import { ArrowLeftIcon, UserIcon, WrenchIcon, ClockIcon, InfoIcon, CalendarIcon, CheckCircleIcon, XCircleIcon } from 'lucide-react';
 
 const OperatorView: React.FC = () => {
   const { operatorId } = useParams<{ operatorId: string }>();
