@@ -132,10 +132,14 @@ const TruckDetail: React.FC = () => {
       competencies.add(truck.repairType);
     }
     if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
-      competencies.add('Customer Adaptation');
+      if (truck.customerAdaptationType === 'Mechanical') {
+        competencies.add('Customer Adaptation - Mechanical');
+      } else if (truck.customerAdaptationType === 'Paint') {
+        competencies.add('Customer Adaptation - Paint');
+      }
     }
     return Array.from(competencies);
-  }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted]);
+  }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted, truck.customerAdaptationType]);
 
   const dayOptions = useMemo(() => {
     const next7Days = generateNextDays(7);
@@ -153,16 +157,28 @@ const TruckDetail: React.FC = () => {
   const availableOperators = useMemo(() => {
     const actualPlanningDate = new Date(selectedPlanningDate); // Ensure it's a Date object
 
-    return operators.filter(op =>
+    const filtered = operators.filter(op =>
       !truck.assignedOperatorIds.includes(op.id) &&
       (op.status === 'Available' || op.assignedTrucks.length === 0) &&
       op.shift === selectedPlanningShift // Filter by selected shift
-    ).sort((a, b) => {
+    );
+
+    // Sort: Operators with required competency first, then by available hours (descending)
+    filtered.sort((a, b) => {
+      const aHasCompetency = truckRequiredCompetencies.some(requiredComp => a.competencies.includes(requiredComp));
+      const bHasCompetency = truckRequiredCompetencies.some(requiredComp => b.competencies.includes(requiredComp));
+
+      if (aHasCompetency && !bHasCompetency) return -1; // a comes before b
+      if (!aHasCompetency && bHasCompetency) return 1;  // b comes before a
+
+      // If both have/don't have competency, sort by available hours
       const aAvailableHours = getAvailableShiftHours(a, actualPlanningDate);
       const bAvailableHours = getAvailableShiftHours(b, actualPlanningDate);
       return bAvailableHours - aAvailableHours;
     });
-  }, [operators, truck.assignedOperatorIds, selectedPlanningDate, selectedPlanningShift]);
+
+    return filtered;
+  }, [operators, truck.assignedOperatorIds, selectedPlanningDate, selectedPlanningShift, truckRequiredCompetencies]);
 
   const isTruckReadyForAssignment =
     truck.status !== 'Completed' &&
@@ -251,6 +267,16 @@ const TruckDetail: React.FC = () => {
                   <WrenchIcon className="mr-2 h-4 w-4" /> Customer Adaptation Work:
                 </h3>
                 <p>{truck.customerAdaptationWork}</p>
+                {truck.customerAdaptationType && (
+                  <p className="text-sm text-purple-700 mt-1">
+                    Type: <b>{truck.customerAdaptationType}</b>
+                  </p>
+                )}
+                {truck.customerAdaptationType === 'Paint' && truck.paintDetails && (
+                  <p className="text-sm text-purple-700 mt-1">
+                    Paint Details: Color <b>{truck.paintDetails.color}</b>, Booth <b>{truck.paintDetails.paintBoothType}</b>
+                  </p>
+                )}
                 {truck.customerAdaptationTimeEstimate !== undefined && truck.customerAdaptationTimeEstimate > 0 && (
                   <p className="text-sm text-purple-700 mt-1">
                     Est. Time: {truck.customerAdaptationTimeEstimate} hrs
@@ -565,7 +591,7 @@ const TruckDetail: React.FC = () => {
                     const hasRequiredCompetency = truckRequiredCompetencies.some(
                       (requiredComp) => op.competencies.includes(requiredComp)
                     );
-                    const rowHighlightClass = hasRequiredCompetency ? 'bg-green-50' : '';
+                    const rowHighlightClass = hasRequiredCompetency ? 'bg-green-50 border-l-4 border-green-500' : '';
 
                     return (
                       <TableRow key={op.id} className={rowHighlightClass}>

@@ -7,8 +7,8 @@ import Header from './components/layout/Header';
 import TruckSearch from './pages/TruckSearch';
 import OperatorSelection from './pages/OperatorSelection';
 import Reports from './pages/Reports';
-import AlternativeDashboard from './pages/AlternativeDashboard';
-import AdminPage from './pages/AdminPage'; // Import the new AdminPage component
+import AdminPage from './pages/AdminPage';
+import CustomerAdaptation from './pages/CustomerAdaptation'; // Import the new CustomerAdaptation component
 
 const App: React.FC = () => {
   return (
@@ -22,8 +22,8 @@ const App: React.FC = () => {
           <Route path="/trucks/:truckId" element={<TruckDetail />} />
           <Route path="/truck-search" element={<TruckSearch />} />
           <Route path="/reports" element={<Reports />} />
-          <Route path="/alternative-dashboard" element={<AlternativeDashboard />} />
-          <Route path="/admin" element={<AdminPage />} /> {/* New route for Admin Page */}
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/customer-adaptation" element={<CustomerAdaptation />} /> {/* New route for Customer Adaptation Page */}
         </Routes>
       </main>
     </div>

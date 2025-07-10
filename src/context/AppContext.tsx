@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { Truck, Operator, Deviation, MissingPart } from '@/types';
+import { Truck, Operator, Deviation, MissingPart, TruckStatus } from '@/types';
 import { generateTrucks, generateOperators, getPriorityScore } from '@/lib/data';
+import { isPast } from 'date-fns';
 
 interface AppContextType {
   trucks: Truck[];
@@ -15,9 +16,9 @@ interface AppContextType {
   unassignOperatorFromTruck: (truckId: string, operatorId: string) => void;
   assignOperatorToTruck: (truckId: string, operatorId: string) => void;
   markTruckComplete: (truckId: string) => void;
-  addOperator: (newOperator: Operator) => void; // New: Add operator
-  updateOperator: (operatorId: string, updates: Partial<Operator>) => void; // New: Update operator
-  deleteOperator: (operatorId: string) => void; // New: Delete operator
+  addOperator: (newOperator: Operator) => void;
+  updateOperator: (operatorId: string, updates: Partial<Operator>) => void;
+  deleteOperator: (operatorId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -28,7 +29,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     try {
-      // Generate initial data
       const initialTrucks = generateTrucks(200);
       const initialOperators = generateOperators(10);
       console.log('Generated initial trucks:', initialTrucks.length, initialTrucks);
@@ -37,13 +37,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setOperators(initialOperators);
     } catch (error) {
       console.error("Error generating initial data in AppProvider:", error);
-      // Depending on the error, you might want to set an error state here
-      // or display a fallback UI. For now, just log it.
     }
   }, []);
 
+  const recalculateTruckStatus = useCallback((currentTruck: Truck): TruckStatus => {
+    console.log(`--- Recalculating status for Truck: ${currentTruck.chassisNumber} (ID: ${currentTruck.id}) ---`);
+    console.log(`Current status before recalculation: ${currentTruck.status}`);
+
+    const hasPendingMissingParts = currentTruck.missingParts.some(
+      (mp) => mp.status !== 'Available' && !mp.completed
+    );
+    const allDeviationsCompleted = currentTruck.deviations.every(dev => dev.completed);
+    const allAvailableMissingPartsCompleted = currentTruck.missingParts
+      .filter(mp => mp.status === 'Available')
+      .every(mp => mp.completed);
+    const customerAdaptationCompleted = currentTruck.customerAdaptationWork === null || currentTruck.customerAdaptationCompleted;
+
+    const allWorkItemsCompleted = allDeviationsCompleted && allAvailableMissingPartsCompleted && customerAdaptationCompleted;
+
+    const anyDeviationCompleted = currentTruck.deviations.some(dev => dev.completed);
+    const anyAvailableMissingPartCompleted = currentTruck.missingParts.some(mp => mp.status === 'Available' && mp.completed);
+    const anyCustomerAdaptationCompleted = currentTruck.customerAdaptationWork !== null && currentTruck.customerAdaptationCompleted;
+    const anyWorkStarted = anyDeviationCompleted || anyAvailableMissingPartCompleted || anyCustomerAdaptationCompleted;
+
+    console.log(`  hasPendingMissingParts: ${hasPendingMissingParts}`);
+    console.log(`  allDeviationsCompleted: ${allDeviationsCompleted}`);
+    console.log(`  allAvailableMissingPartsCompleted: ${allAvailableMissingPartsCompleted}`);
+    console.log(`  customerAdaptationCompleted: ${customerAdaptationCompleted}`);
+    console.log(`  allWorkItemsCompleted: ${allWorkItemsCompleted}`);
+    console.log(`  anyWorkStarted (anyDeviationCompleted || anyAvailableMissingPartCompleted || anyCustomerAdaptationCompleted): ${anyWorkStarted}`);
+    console.log(`  assignedOperatorIds.length: ${currentTruck.assignedOperatorIds.length}`);
+
+    // If the truck is already completed, keep it completed.
+    if (currentTruck.status === 'Completed') {
+      console.log('  -> Status: Completed (already completed)');
+      return 'Completed';
+    }
+
+    // If all work items are completed, it's ready to finish.
+    if (allWorkItemsCompleted) {
+      console.log('  -> Status: Ready to Finish (all work items completed)');
+      return 'Ready to Finish';
+    }
+
+    // If there are pending missing parts that are not available, it's 'Not Ready' or 'Overdue - Not Ready'
+    if (hasPendingMissingParts) {
+      const isOverdue = isPast(currentTruck.deliveryDate, new Date());
+      const newStatus = isOverdue ? 'Overdue - Not Ready' : 'Not Ready';
+      console.log(`  -> Status: ${newStatus} (pending missing parts)`);
+      return newStatus;
+    }
+
+    // If any work is done (deviations, available missing parts, customer adaptation)
+    // and it's not already 'Completed', 'Ready to Finish', or 'Not Ready'
+    if (anyWorkStarted) {
+      // If work has started, it's considered 'Partial' regardless of operator assignment
+      console.log('  -> Status: Partial (work started, treated as partial)');
+      return 'Partial';
+    }
+
+    // If no work is done, and no pending missing parts
+    // If assigned to an operator, it's 'Assigned'
+    if (currentTruck.assignedOperatorIds.length > 0) {
+      console.log('  -> Status: Assigned (assigned, no work started)');
+      return 'Assigned';
+    }
+
+    // If no work is done, no pending missing parts, and no operators assigned, it's 'Ready to Plan'
+    const isOverdue = isPast(currentTruck.deliveryDate, new Date());
+    const newStatus = isOverdue ? 'Overdue - Ready to Plan' : 'Ready to Plan';
+    console.log(`  -> Status: ${newStatus} (no work, no pending parts, not assigned)`);
+    return newStatus;
+  }, []);
+
   const prioritizedTrucks = useMemo(() => {
-    // Filter out trucks that are 'Overdue - Not Ready' or 'Not Ready' as they have 0 priority score
     const eligibleTrucks = trucks.filter(truck =>
       truck.status !== 'Overdue - Not Ready' &&
       truck.status !== 'Not Ready'
@@ -52,7 +119,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return [...eligibleTrucks].sort((a, b) => {
       const scoreA = getPriorityScore(a).totalScore;
       const scoreB = getPriorityScore(b).totalScore;
-      return scoreB - scoreA; // Sort in descending order of priority
+      return scoreB - scoreA;
     });
   }, [trucks]);
 
@@ -77,12 +144,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return dev;
         });
-        return { ...truck, deviations: updatedDeviations };
+        const updatedTruck = { ...truck, deviations: updatedDeviations };
+        return { ...updatedTruck, status: recalculateTruckStatus(updatedTruck) };
       }
       return truck;
     }));
     return success;
-  }, []);
+  }, [recalculateTruckStatus]);
 
   const markMissingPartComplete = useCallback((truckId: string, partId: string, completedBy: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
@@ -93,27 +161,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return part;
         });
-        return { ...truck, missingParts: updatedMissingParts };
+        const updatedTruck = { ...truck, missingParts: updatedMissingParts };
+        return { ...updatedTruck, status: recalculateTruckStatus(updatedTruck) };
       }
       return truck;
     }));
-  }, []);
+  }, [recalculateTruckStatus]);
 
   const markCustomerAdaptationComplete = useCallback((truckId: string, completedBy: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
       if (truck.id === truckId && truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
-        return { ...truck, customerAdaptationCompleted: true, customerAdaptationCompletedAt: new Date(), customerAdaptationCompletedBy: completedBy };
+        const updatedTruck = { ...truck, customerAdaptationCompleted: true, customerAdaptationCompletedAt: new Date(), customerAdaptationCompletedBy: completedBy };
+        return { ...updatedTruck, status: recalculateTruckStatus(updatedTruck) };
       }
       return truck;
     }));
-  }, []);
+  }, [recalculateTruckStatus]);
 
   const unassignOperatorFromTruck = useCallback((truckId: string, operatorId: string) => {
-    setTrucks(prevTrucks => prevTrucks.map(truck =>
-      truck.id === truckId
-        ? { ...truck, assignedOperatorIds: truck.assignedOperatorIds.filter(id => id !== operatorId) }
-        : truck
-    ));
+    setTrucks(prevTrucks => prevTrucks.map(truck => {
+      if (truck.id === truckId) {
+        const updatedAssignedOperatorIds = truck.assignedOperatorIds.filter(id => id !== operatorId);
+        const updatedTruck = { ...truck, assignedOperatorIds: updatedAssignedOperatorIds };
+        return { ...updatedTruck, status: recalculateTruckStatus(updatedTruck) };
+      }
+      return truck;
+    }));
 
     setOperators(prevOperators => prevOperators.map(operator => {
       if (operator.id === operatorId) {
@@ -126,15 +199,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return operator;
     }));
-  }, []);
+  }, [recalculateTruckStatus]);
 
   const assignOperatorToTruck = useCallback((truckId: string, operatorId: string) => {
     setTrucks(prevTrucks =>
-      prevTrucks.map(truck =>
-        truck.id === truckId && !truck.assignedOperatorIds.includes(operatorId)
-          ? { ...truck, assignedOperatorIds: [...truck.assignedOperatorIds, operatorId], status: 'Assigned' }
-          : truck
-      )
+      prevTrucks.map(truck => {
+        if (truck.id === truckId && !truck.assignedOperatorIds.includes(operatorId)) {
+          const updatedTruck = { ...truck, assignedOperatorIds: [...truck.assignedOperatorIds, operatorId] };
+          return { ...updatedTruck, status: recalculateTruckStatus(updatedTruck) };
+        }
+        return truck;
+      })
     );
 
     setOperators(prevOperators =>
@@ -152,7 +227,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return operator;
       })
     );
-  }, [trucks]);
+  }, [trucks, recalculateTruckStatus]);
 
   const markTruckComplete = useCallback((truckId: string) => {
     setTrucks(prevTrucks => prevTrucks.map(truck => {
@@ -192,11 +267,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteOperator = useCallback((operatorId: string) => {
     setOperators(prevOperators => prevOperators.filter(op => op.id !== operatorId));
     // Also unassign this operator from any trucks they might be assigned to
-    setTrucks(prevTrucks => prevTrucks.map(truck => ({
-      ...truck,
-      assignedOperatorIds: truck.assignedOperatorIds.filter(id => id !== operatorId),
-    })));
-  }, []);
+    setTrucks(prevTrucks => prevTrucks.map(truck => {
+      const updatedTruck = {
+        ...truck,
+        assignedOperatorIds: truck.assignedOperatorIds.filter(id => id !== operatorId),
+      };
+      return { ...updatedTruck, status: recalculateTruckStatus(updatedTruck) };
+    }));
+  }, [recalculateTruckStatus]);
 
   const contextValue = useMemo(() => ({
     trucks,
@@ -230,6 +308,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addOperator,
     updateOperator,
     deleteOperator,
+    recalculateTruckStatus,
   ]);
 
   return (

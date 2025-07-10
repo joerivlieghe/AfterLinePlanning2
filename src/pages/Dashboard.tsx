@@ -30,25 +30,25 @@ const Dashboard: React.FC = () => {
 
   // Filter states
   const [filterRepairType, setFilterRepairType] = useState<RepairType | 'all'>('all');
-  const [filterProjectCode, setFilterProjectCode] = useState<string | 'all'>('all'); // Changed to 'all'
-  const [filterStatus, setFilterStatus] = useState<TruckStatus | 'all'>('all');
+  const [filterProjectCode, setFilterProjectCode] = useState<string | 'all'>('all');
+  // Removed filterStatus state as it's redundant with Kanban columns
   const [filterCustomerPriority, setFilterCustomerPriority] = useState<Truck['customerPriority'] | 'all'>('all');
 
-  // Memoized filtered trucks based on all filters
+  // Memoized filtered trucks based on all filters (excluding status)
   const filteredTrucks = useMemo(() => {
     console.log('Filtering trucks. Total trucks:', trucks.length); // Debug log
-    console.log('Current filters:', { filterRepairType, filterProjectCode, filterStatus, filterCustomerPriority }); // Debug log
+    console.log('Current filters:', { filterRepairType, filterProjectCode, filterCustomerPriority }); // Debug log
 
     const result = trucks.filter(truck => {
       const matchesRepairType = filterRepairType === 'all' || truck.repairType === filterRepairType;
       const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
-      const matchesStatus = filterStatus === 'all' || truck.status === filterStatus;
+      // Removed matchesStatus from here
       const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
-      return matchesRepairType && matchesProjectCode && matchesStatus && matchesCustomerPriority;
+      return matchesRepairType && matchesProjectCode && matchesCustomerPriority;
     });
     console.log('Filtered trucks count:', result.length); // Debug log
     return result;
-  }, [trucks, filterRepairType, filterProjectCode, filterStatus, filterCustomerPriority]);
+  }, [trucks, filterRepairType, filterProjectCode, filterCustomerPriority]);
 
   // Kanban Column Filters - now based on filteredTrucks
   const overdueMissingPartsTrucks = useMemo(() =>
@@ -229,20 +229,7 @@ const Dashboard: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <label htmlFor="statusFilter" className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-          <Select value={filterStatus} onValueChange={value => setFilterStatus(value as TruckStatus | 'all')}>
-            <SelectTrigger id="statusFilter">
-              <SelectValue placeholder="All Statuses" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              {ALL_TRUCK_STATUSES.map(status => (
-                <SelectItem key={status} value={status}>{status}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Removed Status Filter dropdown */}
         <div>
           <label htmlFor="priorityFilter" className="block text-sm font-medium text-gray-700 mb-1">Customer Priority</label>
           <Select value={filterCustomerPriority} onValueChange={value => setFilterCustomerPriority(value as Truck['customerPriority'] | 'all')}>

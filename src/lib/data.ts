@@ -10,18 +10,21 @@ import {
   TruckStatus,
   Shift,
   ProposedAssignment,
+  PaintBoothType,
 } from '@/types';
 import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds } from 'date-fns';
 
-export const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
+export const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint']; // Updated: Removed 'Customer Adaptation' (general)
 const REPAIR_AREAS: RepairArea[] = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6'];
 const MISSING_PART_STATUSES: MissingPartStatus[] = ['Ordered', 'In Transit', 'Available'];
 const OPERATOR_STATUSES: OperatorStatus[] = ['Available', 'Busy', 'On Break', 'Off Duty'];
 export const CUSTOMER_PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
 const SHIFTS: Shift[] = ['Early', 'Late'];
+const PAINT_COLORS: string[] = ['Metallic Blue', 'Glossy Black', 'Racing Red', 'Pearl White', 'Matte Grey', 'Forest Green'];
+const PAINT_BOOTH_TYPES: PaintBoothType[] = ['Small', 'Large'];
 
 // Define all possible truck statuses for generation
-const ALL_TRUCK_STATUSES_FOR_GENERATION: TruckStatus[] = [
+export const ALL_TRUCK_STATUSES_FOR_GENERATION: TruckStatus[] = [
   'Pending', 'In Progress', 'Partial', 'Completed', 'Overdue',
   'Missing Parts Not Available', 'Assigned', 'Ready to Finish',
   'Overdue - Not Ready', 'Not Ready', 'Overdue - Ready to Plan', 'Ready to Plan'
@@ -126,12 +129,19 @@ function generateMissingParts(guaranteeOne: boolean = false, forceStatus?: Missi
   return missingParts;
 }
 
-function inferRepairType(deviations: Deviation[], missingParts: MissingPart[], customerAdaptationWork: string | null): RepairType {
-  const potentialTypes: RepairType[] = [];
-
-  if (customerAdaptationWork) {
-    potentialTypes.push('Customer Adaptation');
+function inferRepairType(
+  deviations: Deviation[],
+  missingParts: MissingPart[],
+  customerAdaptationType: Truck['customerAdaptationType']
+): RepairType {
+  if (customerAdaptationType === 'Mechanical') {
+    return 'Customer Adaptation - Mechanical';
   }
+  if (customerAdaptationType === 'Paint') {
+    return 'Customer Adaptation - Paint';
+  }
+
+  const potentialTypes: RepairType[] = [];
 
   deviations.forEach(dev => {
     const desc = dev.description.toLowerCase();
@@ -158,7 +168,8 @@ function inferRepairType(deviations: Deviation[], missingParts: MissingPart[], c
   if (potentialTypes.length > 0) {
     return getRandomElement(potentialTypes);
   }
-  return getRandomElement(REPAIR_TYPES.filter(type => type !== 'Customer Adaptation'));
+  // Filter out all Customer Adaptation types for general repair type inference
+  return getRandomElement(REPAIR_TYPES.filter(type => !type.startsWith('Customer Adaptation')));
 }
 
 export function generateTrucks(count: number): Truck[] {
@@ -173,6 +184,8 @@ export function generateTrucks(count: number): Truck[] {
     let missingParts: MissingPart[] = [];
     let customerAdaptationWork: string | null = null;
     let customerAdaptationCompleted: boolean = false;
+    let customerAdaptationType: Truck['customerAdaptationType'] = undefined;
+    let paintDetails: Truck['paintDetails'] = undefined;
     let projectCode: string | undefined = undefined;
 
     const includeDeviation = Math.random() < 0.8;
@@ -198,13 +211,26 @@ export function generateTrucks(count: number): Truck[] {
     }
 
     if (includeCustomerAdaptation) {
-      customerAdaptationWork = getRandomElement([
-        'Custom paint job',
-        'Enhanced interior lighting',
-        'Specialized cargo securing system',
-        'Additional safety features',
-        'Integrated navigation system upgrade',
-      ]);
+      const caTypes: Truck['customerAdaptationType'][] = ['Mechanical', 'Paint']; // Updated: Removed 'General'
+      customerAdaptationType = getRandomElement(caTypes);
+
+      if (customerAdaptationType === 'Mechanical') {
+        customerAdaptationWork = getRandomElement([
+          'Performance exhaust system installation',
+          'Suspension upgrade for heavy duty',
+          'Custom braking system integration',
+        ]);
+      } else if (customerAdaptationType === 'Paint') {
+        customerAdaptationWork = getRandomElement([
+          'Full vehicle repaint',
+          'Custom stripe design application',
+          'Rust repair and paint matching',
+        ]);
+        paintDetails = {
+          color: getRandomElement(PAINT_COLORS),
+          paintBoothType: getRandomElement(PAINT_BOOTH_TYPES),
+        };
+      }
       customerAdaptationCompleted = false;
     }
 
@@ -233,10 +259,23 @@ export function generateTrucks(count: number): Truck[] {
           timeEstimate: getRandomRepairTime(0.25, 0.5),
         });
       } else if (forcedWorkType === 'customerAdaptation') {
-        customerAdaptationWork = getRandomElement([
-          'Basic interior customization',
-          'Minor exterior detailing',
-        ]);
+        // Force to Mechanical or Paint if customer adaptation is forced
+        customerAdaptationType = getRandomElement(['Mechanical', 'Paint']);
+        if (customerAdaptationType === 'Mechanical') {
+          customerAdaptationWork = getRandomElement([
+            'Basic mechanical customization',
+            'Minor engine tune-up',
+          ]);
+        } else { // Paint
+          customerAdaptationWork = getRandomElement([
+            'Minor paint touch-up',
+            'Exterior detailing',
+          ]);
+          paintDetails = {
+            color: getRandomElement(PAINT_COLORS),
+            paintBoothType: getRandomElement(PAINT_BOOTH_TYPES),
+          };
+        }
         customerAdaptationCompleted = false;
       }
     }
@@ -246,7 +285,7 @@ export function generateTrucks(count: number): Truck[] {
     let customerAdaptationTimeEstimate: number = customerAdaptationWork ? getRandomRepairTime(0.5, 2.5) : 0;
 
     const repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate + customerAdaptationTimeEstimate;
-    const repairType = inferRepairType(deviations, missingParts, customerAdaptationWork);
+    const repairType = inferRepairType(deviations, missingParts, customerAdaptationType);
 
     let deliveryDate: Date;
     const randDelivery = Math.random();
@@ -282,6 +321,8 @@ export function generateTrucks(count: number): Truck[] {
       customerAdaptationWork: customerAdaptationWork,
       customerAdaptationTimeEstimate: customerAdaptationTimeEstimate,
       customerAdaptationCompleted: customerAdaptationCompleted,
+      customerAdaptationType: customerAdaptationType,
+      paintDetails: paintDetails,
       okToDrive: Math.random() > 0.3,
       repairTimeEstimate: repairTimeEstimate,
       deviationTimeEstimate: deviationTimeEstimate,
@@ -312,7 +353,7 @@ export function generateTrucks(count: number): Truck[] {
         truckToPromote.deviationTimeEstimate = (truckToPromote.deviationTimeEstimate || 0) + newDeviationTime;
       }
       truckToPromote.repairTimeEstimate = (truckToPromote.deviationTimeEstimate || 0) + (truckToPromote.missingPartsTimeEstimate || 0) + (truckToPromote.customerAdaptationTimeEstimate || 0);
-      truckToPromote.repairType = inferRepairType(truckToPromote.deviations, truckToPromote.missingParts, truckToPromote.customerAdaptationWork);
+      truckToPromote.repairType = inferRepairType(truckToPromote.deviations, truckToPromote.missingParts, truckToPromote.customerAdaptationType);
       truckToPromote.status = 'Overdue - Ready to Plan'; // Critical trucks should be ready to plan or overdue
       currentCriticalCount++;
     } else {

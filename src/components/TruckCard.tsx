@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { getPriorityColor, getStatusColor, formatDate, getPriorityScore } from '@/lib/data';
-import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, ArrowRightIcon, StarIcon, ClockIcon } from 'lucide-react';
+import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, ArrowRightIcon, StarIcon, ClockIcon, UsersIcon, PaletteIcon, SettingsIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface TruckCardProps {
@@ -32,7 +32,7 @@ const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
           <CardTitle className="text-lg font-semibold">{truck.chassisNumber}</CardTitle>
           <Badge className={getStatusColor(truck.status)}>{truck.status}</Badge>
         </div>
-        <CardDescription className="text-sm text-gray-600">Chassis: {truck.chassisNumber}</CardDescription>
+        <CardDescription className="text-sm text-gray-600">ID: {truck.id}</CardDescription>
       </CardHeader>
       <CardContent className="text-sm space-y-2">
         <div className="flex items-center justify-between">
@@ -92,14 +92,25 @@ const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
         )}
         {truck.customerAdaptationWork && (
           <div className="flex items-center text-purple-600">
-            <InfoIcon className="mr-2 h-4 w-4" />
-            <span>Customer Adaptation</span>
+            {truck.customerAdaptationType === 'Paint' ? (
+              <PaletteIcon className="mr-2 h-4 w-4" />
+            ) : truck.customerAdaptationType === 'Mechanical' ? (
+              <WrenchIcon className="mr-2 h-4 w-4" />
+            ) : (
+              <SettingsIcon className="mr-2 h-4 w-4" />
+            )}
+            <span>Customer Adaptation: {truck.customerAdaptationType || 'General'}</span>
           </div>
         )}
-        {truck.assignedOperatorId && (
+        {truck.customerAdaptationType === 'Paint' && truck.paintDetails && (
+          <div className="flex items-center text-purple-600 ml-6">
+            <span className="text-xs text-muted-foreground">Color: {truck.paintDetails.color}, Booth: {truck.paintDetails.paintBoothType}</span>
+          </div>
+        )}
+        {truck.assignedOperatorIds.length > 0 && (
           <div className="flex items-center text-blue-600">
-            <InfoIcon className="mr-2 h-4 w-4" />
-            <span>Assigned</span>
+            <UsersIcon className="mr-2 h-4 w-4" />
+            <span>Assigned to {truck.assignedOperatorIds.length} operator{truck.assignedOperatorIds.length > 1 ? 's' : ''}</span>
           </div>
         )}
         {showAssignButton && onAssignClick && (

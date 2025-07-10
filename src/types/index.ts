@@ -1,9 +1,10 @@
 export type TruckStatus = 'Pending' | 'In Progress' | 'Partial' | 'Completed' | 'Overdue' | 'Missing Parts Not Available' | 'Assigned' | 'Ready to Finish' | 'Overdue - Not Ready' | 'Not Ready' | 'Overdue - Ready to Plan' | 'Ready to Plan';
-export type RepairType = 'Mechanical' | 'Electrical' | 'Software' | 'Paint' | 'Customer Adaptation';
+export type RepairType = 'Mechanical' | 'Electrical' | 'Software' | 'Paint' | 'Customer Adaptation - Mechanical' | 'Customer Adaptation - Paint';
 export type RepairArea = 'Bay 1' | 'Bay 2' | 'Bay 3' | 'Bay 4' | 'Bay 5' | 'Bay 6';
 export type MissingPartStatus = 'Ordered' | 'In Transit' | 'Available';
 export type OperatorStatus = 'Available' | 'Busy' | 'On Break' | 'Off Duty';
 export type Shift = 'Early' | 'Late';
+export type PaintBoothType = 'Small' | 'Large';
 
 export interface Deviation {
   id: string;
@@ -36,6 +37,11 @@ export interface Truck {
   customerAdaptationCompleted?: boolean;
   customerAdaptationCompletedBy?: string | null;
   customerAdaptationCompletedAt?: Date | null;
+  customerAdaptationType?: 'Mechanical' | 'Paint'; // Updated: Removed 'General'
+  paintDetails?: { // New field for paint-specific details
+    color: string;
+    paintBoothType: PaintBoothType;
+  };
   okToDrive: boolean;
   repairTimeEstimate: number;
   deviationTimeEstimate?: number;
@@ -44,9 +50,9 @@ export interface Truck {
   repairAreaNeeded: RepairArea;
   deliveryDate: Date;
   customerPriority: 'Low' | 'Medium' | 'High' | 'Critical';
-  assignedOperatorIds: string[]; // Changed to array
+  assignedOperatorIds: string[];
   status: TruckStatus;
-  projectCode?: string; // Added projectCode
+  projectCode?: string;
 }
 
 export interface Operator {
@@ -59,12 +65,4 @@ export interface Operator {
   shift: Shift;
   assignedTrucks: Truck[];
   efficiency: number;
-}
-
-export interface ProposedAssignment {
-  truck: Truck;
-  operator: Operator;
-  rejected: boolean;
-  operatorAvailableHoursBefore: number;
-  operatorAvailableHoursAfter: number;
 }
