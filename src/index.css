@@ -33,16 +33,25 @@
     --ring: 222.2 84% 4.9%;
 
     --radius: 0.5rem;
+
+    /* Chart Colors */
+    --chart-1: 220 70% 50%; /* Blue for smallBoothPaintHours */
+    --chart-2: 140 70% 40%; /* Green for smallBoothCAPaintHours */
+    --chart-3: 30 70% 50%;  /* Orange for largeBoothPaintHours */
+    --chart-4: 270 70% 50%; /* Purple for largeBoothCAPaintHours */
+    --chart-5: 0 84.2% 60.2%; /* Red for total capacity */
+    --chart-6: 200 70% 60%; /* Light blue for small capacity */
+    --chart-7: 40 70% 60%;  /* Light orange for large capacity */
   }
 
   .dark {
-    --background: 222.2 47.4% 11.2%;
+    --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
 
-    --card: 222.2 47.4% 11.2%;
+    --card: 222.2 84% 4.9%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222.2 47.4% 11.2%;
+    --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
 
     --primary: 210 40% 98%;
@@ -63,6 +72,15 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+
+    /* Chart Colors for Dark Mode (can be adjusted if needed) */
+    --chart-1: 220 70% 60%;
+    --chart-2: 140 70% 50%;
+    --chart-3: 30 70% 60%;
+    --chart-4: 270 70% 60%;
+    --chart-5: 0 70% 70%;
+    --chart-6: 200 70% 70%;
+    --chart-7: 40 70% 70%;
   }
 }
 
@@ -72,23 +90,5 @@
   }
   body {
     @apply bg-background text-foreground;
-  }
-}
-
-@keyframes collapsible-down {
-  from {
-    height: 0;
-  }
-  to {
-    height: var(--radix-collapsible-content-height);
-  }
-}
-
-@keyframes collapsible-up {
-  from {
-    height: var(--radix-collapsible-content-height);
-  }
-  to {
-    height: 0;
   }
 }

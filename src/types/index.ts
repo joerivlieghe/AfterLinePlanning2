@@ -66,3 +66,30 @@ export interface Operator {
   assignedTrucks: Truck[];
   efficiency: number;
 }
+
+export interface ScheduledTruckDetail {
+  truckId: string;
+  chassisNumber: string;
+  repairType: RepairType;
+  hoursScheduled: number;
+  paintBoothType: PaintBoothType;
+}
+
+export interface DailyPaintBoothOccupancy {
+  date: string;
+  // Total hours for chart (stacked)
+  totalScheduledHours: number;
+  // Granular hours for clustered/stacked chart
+  smallBoothPaintHours: number;
+  smallBoothCAPaintHours: number;
+  largeBoothPaintHours: number;
+  largeBoothCAPaintHours: number;
+  // Capacity tracking
+  smallBoothScheduledHours: number;
+  largeBoothScheduledHours: number;
+  availableCapacity: number; // Total available capacity
+  capacityProblem: boolean;
+  // Details for daily schedule tables
+  smallBoothScheduledTrucksDetails: ScheduledTruckDetail[];
+  largeBoothScheduledTrucksDetails: ScheduledTruckDetail[];
+}

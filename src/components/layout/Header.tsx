@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { HomeIcon, UsersIcon, TruckIcon, SearchIcon, BarChart2Icon, SettingsIcon, WrenchIcon } from 'lucide-react';
+import { HomeIcon, UsersIcon, TruckIcon, SearchIcon, BarChart2Icon, SettingsIcon, WrenchIcon, PaintbrushIcon } from 'lucide-react'; // Import PaintbrushIcon
 import { cn } from '@/lib/utils';
 
 const Header: React.FC = () => {
@@ -12,6 +12,7 @@ const Header: React.FC = () => {
     { name: 'Truck Search', href: '/truck-search', icon: SearchIcon },
     { name: 'Reports', href: '/reports', icon: BarChart2Icon },
     { name: 'Customer Adaptation', href: '/customer-adaptation', icon: WrenchIcon },
+    { name: 'Paint Booth', href: '/paint-booth-occupancy', icon: PaintbrushIcon }, // New nav item
     { name: 'Admin', href: '/admin', icon: SettingsIcon },
   ];
 

@@ -8,7 +8,8 @@ import TruckSearch from './pages/TruckSearch';
 import OperatorSelection from './pages/OperatorSelection';
 import Reports from './pages/Reports';
 import AdminPage from './pages/AdminPage';
-import CustomerAdaptation from './pages/CustomerAdaptation'; // Import the new CustomerAdaptation component
+import CustomerAdaptation from './pages/CustomerAdaptation';
+import PaintBoothOccupancy from './pages/PaintBoothOccupancy'; // Import the new PaintBoothOccupancy component
 
 const App: React.FC = () => {
   return (
@@ -23,7 +24,8 @@ const App: React.FC = () => {
           <Route path="/truck-search" element={<TruckSearch />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/admin" element={<AdminPage />} />
-          <Route path="/customer-adaptation" element={<CustomerAdaptation />} /> {/* New route for Customer Adaptation Page */}
+          <Route path="/customer-adaptation" element={<CustomerAdaptation />} />
+          <Route path="/paint-booth-occupancy" element={<PaintBoothOccupancy />} /> {/* New route for Paint Booth Occupancy Page */}
         </Routes>
       </main>
     </div>

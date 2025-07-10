@@ -11,8 +11,10 @@ import {
   Shift,
   ProposedAssignment,
   PaintBoothType,
+  DailyPaintBoothOccupancy, // Import the updated interface
+  ScheduledTruckDetail, // Import the updated interface
 } from '@/types';
-import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds } from 'date-fns';
+import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds, startOfDay } from 'date-fns';
 
 export const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint']; // Updated: Removed 'Customer Adaptation' (general)
 const REPAIR_AREAS: RepairArea[] = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6'];
@@ -33,6 +35,11 @@ export const ALL_TRUCK_STATUSES_FOR_GENERATION: TruckStatus[] = [
 // Define a fixed set of project codes
 const PROJECT_CODES: string[] = ['PROJ-ALPHA', 'PROJ-BETA', 'PROJ-GAMMA'];
 const MAX_PROJECT_TRUCK_PERCENTAGE = 0.03; // 3%
+
+// Paint Booth Capacities
+export const SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS = 16; // Example: Small booth capacity
+export const LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS = 16; // Example: Large booth capacity
+export const TOTAL_PAINT_BOOTH_DAILY_CAPACITY_HOURS = SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS + LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS; // Combined total capacity
 
 function getRandomElement<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -179,6 +186,10 @@ export function generateTrucks(count: number): Truck[] {
   let projectTrucksCount = 0;
   const maxProjectTrucks = Math.floor(count * MAX_PROJECT_TRUCK_PERCENTAGE);
 
+  // Define a 3-week range around today
+  const threeWeeksAgo = addDays(now, -21);
+  const threeWeeksFromNow = addDays(now, 21);
+
   for (let i = 0; i < count; i++) {
     let deviations: Deviation[] = [];
     let missingParts: MissingPart[] = [];
@@ -288,14 +299,8 @@ export function generateTrucks(count: number): Truck[] {
     const repairType = inferRepairType(deviations, missingParts, customerAdaptationType);
 
     let deliveryDate: Date;
-    const randDelivery = Math.random();
-    if (randDelivery < 0.15) { // 15% overdue
-      deliveryDate = getRandomDate(addDays(now, -30), addDays(now, -1));
-    } else if (randDelivery < 0.45) { // 30% due soon
-      deliveryDate = getRandomDate(addDays(now, 1), addDays(now, 7));
-    } else { // 55% due later
-      deliveryDate = getRandomDate(addDays(now, 8), addDays(now, 60));
-    }
+    // Generate delivery date within the 3-week range around today
+    deliveryDate = getRandomDate(threeWeeksAgo, threeWeeksFromNow);
 
     const customerPriority = getRandomElement(CUSTOMER_PRIORITIES);
 
@@ -321,6 +326,8 @@ export function generateTrucks(count: number): Truck[] {
       customerAdaptationWork: customerAdaptationWork,
       customerAdaptationTimeEstimate: customerAdaptationTimeEstimate,
       customerAdaptationCompleted: customerAdaptationCompleted,
+      customerAdaptationCompletedBy: null,
+      customerAdaptationCompletedAt: null,
       customerAdaptationType: customerAdaptationType,
       paintDetails: paintDetails,
       okToDrive: Math.random() > 0.3,
@@ -657,4 +664,191 @@ export function generateNextDays(numDays: number): Date[] {
     dates.push(addDays(today, i));
   }
   return dates;
+}
+
+export function simulatePaintBoothSchedule(
+  trucks: Truck[],
+  numDays: number,
+  capacities: { small: number; large: number }
+): {
+  occupancyData: DailyPaintBoothOccupancy[];
+  truckCompletionDates: Map<string, Date>;
+} {
+  const { small: smallCapacity, large: largeCapacity } = capacities;
+  const totalCapacity = smallCapacity + largeCapacity;
+
+  const dailyOccupancyMap = new Map<string, DailyPaintBoothOccupancy>();
+  const truckCompletionDates = new Map<string, Date>();
+  const today = startOfDay(new Date());
+
+  // Initialize daily occupancy for the next 'numDays'
+  for (let i = 0; i < numDays; i++) {
+    const date = addDays(today, i);
+    const formattedDate = format(date, 'MMM dd');
+    dailyOccupancyMap.set(formattedDate, {
+      date: formattedDate,
+      totalScheduledHours: 0,
+      smallBoothPaintHours: 0,
+      smallBoothCAPaintHours: 0,
+      largeBoothPaintHours: 0,
+      largeBoothCAPaintHours: 0,
+      smallBoothScheduledHours: 0,
+      largeBoothScheduledHours: 0,
+      availableCapacity: totalCapacity,
+      capacityProblem: false,
+      smallBoothScheduledTrucksDetails: [],
+      largeBoothScheduledTrucksDetails: [],
+    });
+  }
+
+  // Sort trucks by delivery date (earliest first), then customer priority (Critical first)
+  const sortedTrucks = [...trucks].sort((a, b) => {
+    const deliveryDateDiff = a.deliveryDate.getTime() - b.deliveryDate.getTime();
+    if (deliveryDateDiff !== 0) return deliveryDateDiff;
+
+    const priorityOrder = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
+    return (priorityOrder[b.customerPriority] || 0) - (priorityOrder[a.customerPriority] || 0);
+  });
+
+  sortedTrucks.forEach((truck) => {
+    let hoursRemainingForTruck = truck.repairTimeEstimate || 0;
+    const isCAPaint = truck.customerAdaptationType === 'Paint';
+    const requiredBoothType = truck.paintDetails?.paintBoothType || 'Small'; // Default to small if not specified
+    let truckCompletedOnDate: Date | null = null;
+
+    // Iterate through days to schedule the truck's work
+    const maxSchedulingDays = numDays + 30; // Schedule up to 30 days beyond the chart view
+    for (let dayIndex = 0; dayIndex < maxSchedulingDays; dayIndex++) {
+      const dateForScheduling = addDays(today, dayIndex);
+      const formattedDate = format(dateForScheduling, 'MMM dd');
+
+      // Ensure the day entry exists in our map
+      if (!dailyOccupancyMap.has(formattedDate)) {
+        dailyOccupancyMap.set(formattedDate, {
+          date: formattedDate,
+          totalScheduledHours: 0,
+          smallBoothPaintHours: 0,
+          smallBoothCAPaintHours: 0,
+          largeBoothPaintHours: 0,
+          largeBoothCAPaintHours: 0,
+          smallBoothScheduledHours: 0,
+          largeBoothScheduledHours: 0,
+          availableCapacity: totalCapacity,
+          capacityProblem: false,
+          smallBoothScheduledTrucksDetails: [],
+          largeBoothScheduledTrucksDetails: [],
+        });
+      }
+
+      const currentDayEntry = dailyOccupancyMap.get(formattedDate)!;
+      let hoursScheduledToday = 0;
+
+      if (requiredBoothType === 'Large') {
+        const largeBoothRemainingCapacity = largeCapacity - currentDayEntry.largeBoothScheduledHours;
+        const hoursToAllocateInLargeBooth = Math.min(hoursRemainingForTruck, largeBoothRemainingCapacity);
+        
+        if (hoursToAllocateInLargeBooth > 0) {
+          currentDayEntry.largeBoothScheduledHours += hoursToAllocateInLargeBooth;
+          hoursScheduledToday += hoursToAllocateInLargeBooth;
+          hoursRemainingForTruck -= hoursToAllocateInLargeBooth;
+
+          if (isCAPaint) {
+            currentDayEntry.largeBoothCAPaintHours += hoursToAllocateInLargeBooth;
+          } else {
+            currentDayEntry.largeBoothPaintHours += hoursToAllocateInLargeBooth;
+          }
+          currentDayEntry.largeBoothScheduledTrucksDetails.push({
+            truckId: truck.id,
+            chassisNumber: truck.chassisNumber,
+            repairType: truck.repairType,
+            hoursScheduled: hoursToAllocateInLargeBooth,
+            paintBoothType: requiredBoothType,
+          });
+        }
+      } else { // Small booth required
+        const smallBoothRemainingCapacity = smallCapacity - currentDayEntry.smallBoothScheduledHours;
+        const largeBoothRemainingCapacity = largeCapacity - currentDayEntry.largeBoothScheduledHours; // For spillover
+
+        // Try to allocate in small booth first
+        const hoursToAllocateInSmallBooth = Math.min(hoursRemainingForTruck, smallBoothRemainingCapacity);
+        if (hoursToAllocateInSmallBooth > 0) {
+          currentDayEntry.smallBoothScheduledHours += hoursToAllocateInSmallBooth;
+          hoursScheduledToday += hoursToAllocateInSmallBooth;
+          hoursRemainingForTruck -= hoursToAllocateInSmallBooth;
+
+          if (isCAPaint) {
+            currentDayEntry.smallBoothCAPaintHours += hoursToAllocateInSmallBooth;
+          } else {
+            currentDayEntry.smallBoothPaintHours += hoursToAllocateInSmallBooth;
+          }
+          currentDayEntry.smallBoothScheduledTrucksDetails.push({
+            truckId: truck.id,
+            chassisNumber: truck.chassisNumber,
+            repairType: truck.repairType,
+            hoursScheduled: hoursToAllocateInSmallBooth,
+            paintBoothType: requiredBoothType,
+          });
+        }
+
+        // If still hours remaining, try to allocate in large booth (spillover)
+        if (hoursRemainingForTruck > 0) {
+          const hoursToAllocateInLargeBooth = Math.min(hoursRemainingForTruck, largeBoothRemainingCapacity);
+          if (hoursToAllocateInLargeBooth > 0) {
+            currentDayEntry.largeBoothScheduledHours += hoursToAllocateInLargeBooth;
+            hoursScheduledToday += hoursToAllocateInLargeBooth;
+            hoursRemainingForTruck -= hoursToAllocateInLargeBooth;
+
+            if (isCAPaint) {
+              currentDayEntry.largeBoothCAPaintHours += hoursToAllocateInLargeBooth;
+            } else {
+              currentDayEntry.largeBoothPaintHours += hoursToAllocateInLargeBooth;
+            }
+            currentDayEntry.largeBoothScheduledTrucksDetails.push({
+              truckId: truck.id,
+              chassisNumber: truck.chassisNumber,
+              repairType: truck.repairType,
+              hoursScheduled: hoursToAllocateInLargeBooth,
+              paintBoothType: 'Large', // This is spillover into large booth
+            });
+          }
+        }
+      }
+
+      // Update total scheduled hours for the day
+      currentDayEntry.totalScheduledHours = currentDayEntry.smallBoothScheduledHours + currentDayEntry.largeBoothScheduledHours;
+      dailyOccupancyMap.set(formattedDate, currentDayEntry);
+
+      if (hoursRemainingForTruck <= 0) {
+        truckCompletedOnDate = dateForScheduling;
+        break; // Truck fully scheduled
+      }
+    }
+
+    // Store the estimated completion date for the truck
+    if (truckCompletedOnDate) {
+      truckCompletionDates.set(truck.id, truckCompletedOnDate);
+    } else {
+      // If truck couldn't be scheduled within the maxSchedulingDays,
+      // assume it completes on the last day of the scheduling horizon.
+      truckCompletionDates.set(truck.id, addDays(today, maxSchedulingDays - 1));
+    }
+  });
+
+  // Convert map to array, sort by date, and calculate final metrics
+  const occupancyData = Array.from(dailyOccupancyMap.values()).sort((a, b) => {
+    const dateA = new Date(a.date + ' ' + today.getFullYear());
+    const dateB = new Date(b.date + ' ' + today.getFullYear());
+    return dateA.getTime() - dateB.getTime();
+  }).filter((entry, index) => {
+    // Only include entries for the requested numDays, starting from today
+    const entryDate = new Date(entry.date + ' ' + today.getFullYear());
+    return isAfter(entryDate, addDays(today, -1)) && isBefore(entryDate, addDays(today, numDays));
+  });
+
+  occupancyData.forEach(entry => {
+    entry.availableCapacity = totalCapacity - entry.totalScheduledHours;
+    entry.capacityProblem = entry.totalScheduledHours > totalCapacity;
+  });
+
+  return { occupancyData, truckCompletionDates };
 }
