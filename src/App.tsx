@@ -9,7 +9,9 @@ import OperatorSelection from './pages/OperatorSelection';
 import Reports from './pages/Reports';
 import AdminPage from './pages/AdminPage';
 import CustomerAdaptation from './pages/CustomerAdaptation';
-import PaintBoothOccupancy from './pages/PaintBoothOccupancy'; // Import the new PaintBoothOccupancy component
+import PaintBoothOccupancy from './pages/PaintBoothOccupancy';
+import PlanningDashboard from './pages/PlanningDashboard';
+import TruckPlanningSummaryPage from './pages/TruckPlanningSummaryPage'; // Import the new page
 
 const App: React.FC = () => {
   return (
@@ -25,7 +27,9 @@ const App: React.FC = () => {
           <Route path="/reports" element={<Reports />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/customer-adaptation" element={<CustomerAdaptation />} />
-          <Route path="/paint-booth-occupancy" element={<PaintBoothOccupancy />} /> {/* New route for Paint Booth Occupancy Page */}
+          <Route path="/paint-booth-occupancy" element={<PaintBoothOccupancy />} />
+          <Route path="/planning" element={<PlanningDashboard />} />
+          <Route path="/truck-planning-summary" element={<TruckPlanningSummaryPage />} /> {/* New route */}
         </Routes>
       </main>
     </div>

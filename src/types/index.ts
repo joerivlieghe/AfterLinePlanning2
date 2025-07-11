@@ -43,9 +43,9 @@ export interface Truck {
     paintBoothType: PaintBoothType;
   };
   okToDrive: boolean;
-  repairTimeEstimate: number;
-  deviationTimeEstimate?: number;
-  missingPartsTimeEstimate?: number;
+  repairTimeEstimate: number; // This will now be the primary estimate for its main repair type
+  deviationTimeEstimate?: number; // Raw deviation time
+  missingPartsTimeEstimate?: number; // Raw missing parts time
   repairType: RepairType;
   repairAreaNeeded: RepairArea;
   deliveryDate: Date;
@@ -72,7 +72,9 @@ export interface ScheduledTruckDetail {
   chassisNumber: string;
   repairType: RepairType;
   hoursScheduled: number;
-  paintBoothType: PaintBoothType;
+  paintBoothType?: PaintBoothType; // Optional for general repair
+  operatorId?: string; // For general repair
+  operatorName?: string; // For general repair
 }
 
 export interface DailyPaintBoothOccupancy {
@@ -92,4 +94,30 @@ export interface DailyPaintBoothOccupancy {
   // Details for daily schedule tables
   smallBoothScheduledTrucksDetails: ScheduledTruckDetail[];
   largeBoothScheduledTrucksDetails: ScheduledTruckDetail[];
+}
+
+export interface DailyOperatorOccupancy {
+  date: string;
+  totalScheduledHours: number;
+  availableCapacity: number; // Total available operator hours for the day
+  capacityProblem: boolean;
+  scheduledTrucksDetails: ScheduledTruckDetail[];
+  operatorWorkload: {
+    [operatorId: string]: {
+      operatorName: string;
+      hoursScheduled: number;
+      trucks: { truckId: string; chassisNumber: string; hours: number }[];
+    };
+  };
+}
+
+export interface TruckPlanningSummary {
+  truck: Truck;
+  paintSchedule: { date: string; boothType: PaintBoothType; hours: number }[];
+  generalRepairSchedule: { date: string; operatorName: string; hours: number }[];
+  estimatedPaintCompletionDate: Date | null;
+  estimatedGeneralRepairCompletionDate: Date | null;
+  overallEstimatedCompletionDate: Date | null;
+  isProjectedOverdue: boolean;
+  isPlanningAccepted: boolean; // Conceptual for "Accept/Assign"
 }
