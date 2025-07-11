@@ -4,16 +4,18 @@ import { TruckPlanningSummary } from '@/types';
 import { format, addDays, isAfter, isBefore, startOfDay } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { getPriorityColor, getStatusColor, simulatePaintBoothSchedule, SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS, LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS, simulateGeneralRepairSchedule } from '@/lib/data';
+import { getPriorityColor, getStatusColor, simulatePaintBoothSchedule, SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS, LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS, simulateGeneralRepairSchedule, getGeneralRepairTypesNeeded } from '@/lib/data'; // Import getGeneralRepairTypesNeeded
 import { Badge } from '@/components/ui/badge';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast'; // Import useToast
 
 const TruckPlanningSummaryPage: React.FC = () => {
-  const { trucks, operators } = useAppContext();
+  const { trucks, operators, assignOperatorToTruck, updateTruckStatus } = useAppContext(); // Added assignOperatorToTruck, updateTruckStatus
   const [numDays] = useState(60); // Simulate for a longer period to ensure completion dates are found
   const [acceptedPlans, setAcceptedPlans] = useState<Set<string>>(new Set());
+  const { toast } = useToast(); // Initialize toast
 
   // Simulate paint booth schedule for all trucks that need paint
   const { occupancyData: paintOccupancyData, truckCompletionDates: paintTruckCompletionDates } = useMemo(() => {
@@ -156,13 +158,74 @@ const TruckPlanningSummaryPage: React.FC = () => {
   }, [trucks, operators, numDays, acceptedPlans, paintOccupancyData, generalRepairOccupancyData, paintTruckCompletionDates, generalRepairTruckCompletionDates]);
 
   const handleAcceptAssign = (truckId: string) => {
+    const truckToAssign = trucks.find(t => t.id === truckId);
+    if (!truckToAssign) {
+      toast({
+        title: "Error",
+        description: "Truck not found.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const needsPaintWork = (truckToAssign.repairType === 'Paint' || truckToAssign.customerAdaptationType === 'Paint');
+    const needsGeneralRepairWork = (truckToAssign.deviationTimeEstimate || 0) > 0 || (truckToAssign.missingPartsTimeEstimate || 0) > 0;
+
+    const operatorsToAssign: string[] = [];
+    let paintOperatorFound = false;
+    let generalRepairOperatorFound = false;
+
+    // Try to find a paint operator if needed
+    if (needsPaintWork) {
+      const paintOperators = operators.filter(op =>
+        op.status === 'Available' &&
+        (op.competencies.includes('Paint') || op.competencies.includes('Customer Adaptation - Paint'))
+      ).sort((a, b) => b.efficiency - a.efficiency);
+
+      if (paintOperators.length > 0) {
+        operatorsToAssign.push(paintOperators[0].id);
+        paintOperatorFound = true;
+      }
+    }
+
+    // Try to find a general repair operator if needed
+    if (needsGeneralRepairWork) {
+      const neededCompetencies = getGeneralRepairTypesNeeded(truckToAssign);
+      const generalRepairOperators = operators.filter(op =>
+        op.status === 'Available' &&
+        !operatorsToAssign.includes(op.id) && // Ensure distinct operator
+        neededCompetencies.some(comp => op.competencies.includes(comp))
+      ).sort((a, b) => b.efficiency - a.efficiency);
+
+      if (generalRepairOperators.length > 0) {
+        operatorsToAssign.push(generalRepairOperators[0].id);
+        generalRepairOperatorFound = true;
+      }
+    }
+
+    // Check if all required operators were found
+    if ((needsPaintWork && !paintOperatorFound) || (needsGeneralRepairWork && !generalRepairOperatorFound)) {
+      toast({
+        title: "Assignment Failed",
+        description: "Could not find all required available and competent operators for this truck.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Assign all found operators to the truck
+    operatorsToAssign.forEach(opId => {
+      assignOperatorToTruck(truckId, opId);
+    });
+
     setAcceptedPlans(prev => {
       const newSet = new Set(prev);
-      if (!newSet.has(truckId)) {
-        newSet.add(truckId);
-        console.log(`Planning for truck ${truckId} accepted.`);
-      }
+      newSet.add(truckId);
       return newSet;
+    });
+    toast({
+      title: "Planning Accepted & Assigned",
+      description: `Truck ${truckToAssign.chassisNumber} assigned to ${operatorsToAssign.length} operator(s) and planning accepted.`,
     });
   };
 
@@ -254,9 +317,9 @@ const TruckPlanningSummaryPage: React.FC = () => {
                           variant={summary.isPlanningAccepted ? "secondary" : "default"}
                           size="sm"
                           onClick={() => handleAcceptAssign(summary.truck.id)}
-                          disabled={summary.isPlanningAccepted}
+                          disabled={summary.isPlanningAccepted || summary.truck.assignedOperatorIds.length > 0} // Disable if already assigned
                         >
-                          {summary.isPlanningAccepted ? 'Accepted' : 'Accept/Assign'}
+                          {summary.isPlanningAccepted || summary.truck.assignedOperatorIds.length > 0 ? 'Accepted/Assigned' : 'Accept/Assign'}
                         </Button>
                       </TableCell>
                     </TableRow>

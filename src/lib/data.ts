@@ -189,7 +189,7 @@ function inferRepairType(
  * @param truck The truck to analyze.
  * @returns An array of RepairType strings representing the general repair competencies needed.
  */
-function getGeneralRepairTypesNeeded(truck: Truck): RepairType[] {
+export function getGeneralRepairTypesNeeded(truck: Truck): RepairType[] {
   const neededTypes: Set<RepairType> = new Set();
 
   truck.deviations.forEach(dev => {
@@ -263,8 +263,11 @@ export function generateTrucks(count: number): Truck[] {
       deviations = generateDeviations(false);
     }
 
+    // Adjust missing parts generation to ensure more 'Available' parts initially
     if (includeMissingPart) {
-      missingParts = generateMissingParts(true);
+      // 70% chance to have available parts, 30% for ordered/in transit
+      const forceStatus = Math.random() < 0.7 ? 'Available' : getRandomElement(['Ordered', 'In Transit']);
+      missingParts = generateMissingParts(true, forceStatus);
     } else {
       missingParts = generateMissingParts(false);
     }
@@ -491,10 +494,16 @@ export function generateOperators(count: number): Operator[] {
   ];
 
   const shuffledNames = [...allOperatorNames].sort(() => 0.5 - Math.random());
-  const uniqueNames = shuffledNames.slice(0, Math.min(count, shuffledNames.length));
+  let nameIndex = 0;
+
+  const numEarlyShift = count / 2;
+  const numLateShift = count / 2;
+
+  const numPaintPerShift = 2;
+  const numGeneralRepairPerShift = 10; // 12 total per shift, 2 paint, 10 general
 
   for (let i = 0; i < count; i++) {
-    const shiftType = getRandomElement(SHIFTS);
+    const shiftType: Shift = i < numEarlyShift ? 'Early' : 'Late';
     let shiftStartTime: Date;
     let shiftEndTime: Date;
 
@@ -507,18 +516,29 @@ export function generateOperators(count: number): Operator[] {
     }
 
     const competencies: RepairType[] = [];
-    // Filter out paint-related repair types for general operators
-    const generalRepairTypes = REPAIR_TYPES.filter(type => !type.includes('Paint'));
-    const numCompetencies = getRandomNumber(1, generalRepairTypes.length);
-    const shuffledRepairTypes = [...generalRepairTypes].sort(() => 0.5 - Math.random());
-    for (let j = 0; j < numCompetencies; j++) {
-      competencies.push(shuffledRepairTypes[j]);
+    const currentShiftIndex = i % (count / 2); // Index within the current shift (0-11)
+
+    if (currentShiftIndex < numPaintPerShift) {
+      // Assign as Paint specialist
+      competencies.push('Paint', 'Customer Adaptation - Paint');
+    } else {
+      // Assign as General Repair specialist
+      const generalRepairTypes = REPAIR_TYPES.filter(type => !type.includes('Paint') && !type.startsWith('Customer Adaptation'));
+      const numCompetencies = getRandomNumber(1, generalRepairTypes.length);
+      const shuffledRepairTypes = [...generalRepairTypes].sort(() => 0.5 - Math.random());
+      for (let j = 0; j < numCompetencies; j++) {
+        competencies.push(shuffledRepairTypes[j]);
+      }
+      // Also add Customer Adaptation - Mechanical for general repair operators
+      if (!competencies.includes('Customer Adaptation - Mechanical')) {
+        competencies.push('Customer Adaptation - Mechanical');
+      }
     }
 
     const operator: Operator = {
       id: `OP-${i + 1}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      name: uniqueNames[i] || `Operator ${i + 1}`,
-      competencies: competencies,
+      name: shuffledNames[nameIndex++ % shuffledNames.length] || `Operator ${i + 1}`,
+      competencies: Array.from(new Set(competencies)), // Ensure unique competencies
       status: 'Available',
       shiftStartTime: shiftStartTime,
       shiftEndTime: shiftEndTime,
@@ -1028,38 +1048,45 @@ export function simulateGeneralRepairSchedule(
       });
       currentDayEntry.availableCapacity = totalDailyOperatorCapacity;
 
-      // Find suitable operators for the current truck on this day
-      const eligibleOperators = operators.filter(op =>
+      // Find the single best suitable operator for the current truck on this day
+      const bestOperatorForThisTruckToday = operators.filter(op =>
         op.status === 'Available' &&
         neededCompetencies.some(comp => op.competencies.includes(comp)) // Check if operator has *any* needed competency
-      ).sort((a, b) => b.efficiency - a.efficiency); // Prioritize more efficient operators
+      ).sort((a, b) => {
+        // Prioritize by remaining hours (more available first), then efficiency
+        const aRemainingHours = (a.shiftEndTime.getTime() - a.shiftStartTime.getTime()) / (1000 * 60 * 60) - (mutableOperatorsDailyWorkload.get(a.id)?.[formattedDate] || 0);
+        const bRemainingHours = (b.shiftEndTime.getTime() - b.shiftStartTime.getTime()) / (1000 * 60 * 60) - (mutableOperatorsDailyWorkload.get(b.id)?.[formattedDate] || 0);
+        
+        if (aRemainingHours !== bRemainingHours) {
+          return bRemainingHours - aRemainingHours; // More hours available first
+        }
+        return b.efficiency - a.efficiency; // Then more efficient
+      })[0]; // Take only the best one
 
       let hoursScheduledToday = 0;
 
-      for (const operator of eligibleOperators) {
-        if (hoursRemainingForTruck <= 0) break;
-
-        const operatorDailyWorkload = mutableOperatorsDailyWorkload.get(operator.id)!;
+      if (bestOperatorForThisTruckToday) {
+        const operatorDailyWorkload = mutableOperatorsDailyWorkload.get(bestOperatorForThisTruckToday.id)!;
         const operatorScheduledToday = operatorDailyWorkload[formattedDate] || 0;
-        const operatorTotalShiftHours = (operator.shiftEndTime.getTime() - operator.shiftStartTime.getTime()) / (1000 * 60 * 60);
+        const operatorTotalShiftHours = (bestOperatorForThisTruckToday.shiftEndTime.getTime() - bestOperatorForThisTruckToday.shiftStartTime.getTime()) / (1000 * 60 * 60);
         const operatorRemainingHoursToday = Math.max(0, operatorTotalShiftHours - operatorScheduledToday);
 
-        const hoursToAllocate = Math.min(hoursRemainingForTruck, operatorRemainingHoursToday * operator.efficiency);
+        const hoursToAllocate = Math.min(hoursRemainingForTruck, operatorRemainingHoursToday * bestOperatorForThisTruckToday.efficiency);
 
         if (hoursToAllocate > 0) {
           // Update operator's assigned workload for the day
           operatorDailyWorkload[formattedDate] = (operatorDailyWorkload[formattedDate] || 0) + hoursToAllocate;
-          mutableOperatorsDailyWorkload.set(operator.id, operatorDailyWorkload);
+          mutableOperatorsDailyWorkload.set(bestOperatorForThisTruckToday.id, operatorDailyWorkload);
 
-          if (!currentDayEntry.operatorWorkload[operator.id]) {
-            currentDayEntry.operatorWorkload[operator.id] = {
-              operatorName: operator.name,
+          if (!currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id]) {
+            currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id] = {
+              operatorName: bestOperatorForThisTruckToday.name,
               hoursScheduled: 0,
               trucks: [],
             };
           }
-          currentDayEntry.operatorWorkload[operator.id].hoursScheduled += hoursToAllocate;
-          currentDayEntry.operatorWorkload[operator.id].trucks.push({
+          currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id].hoursScheduled += hoursToAllocate;
+          currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id].trucks.push({
             truckId: truck.id,
             chassisNumber: truck.chassisNumber,
             hours: hoursToAllocate,
@@ -1072,8 +1099,8 @@ export function simulateGeneralRepairSchedule(
             chassisNumber: truck.chassisNumber,
             repairType: truck.repairType, // Keep original repairType for display, but assignment based on neededCompetencies
             hoursScheduled: hoursToAllocate,
-            operatorId: operator.id,
-            operatorName: operator.name,
+            operatorId: bestOperatorForThisTruckToday.id,
+            operatorName: bestOperatorForThisTruckToday.name,
           });
         }
       }

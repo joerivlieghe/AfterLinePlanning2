@@ -20,7 +20,7 @@ const ALL_TRUCK_STATUSES: TruckStatus[] = [
 ];
 
 const Dashboard: React.FC = () => {
-  const { trucks, operators, setTrucks, setOperators, prioritizedTrucks, allProjectCodes } = useAppContext();
+  const { trucks, operators, prioritizedTrucks, allProjectCodes, assignOperatorToTruck, updateTruckStatus } = useAppContext(); // Added assignOperatorToTruck, updateTruckStatus
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
@@ -36,6 +36,12 @@ const Dashboard: React.FC = () => {
 
   // Memoized filtered trucks based on all filters (excluding status)
   const filteredTrucks = useMemo(() => {
+    // Defensive check: Ensure trucks is an array before filtering
+    if (!Array.isArray(trucks)) {
+      console.error('`trucks` is not an array in filteredTrucks useMemo:', trucks);
+      return []; // Return an empty array to prevent the filter error
+    }
+
     console.log('Filtering trucks. Total trucks:', trucks.length); // Debug log
     console.log('Current filters:', { filterRepairType, filterProjectCode, filterCustomerPriority }); // Debug log
 
@@ -52,35 +58,44 @@ const Dashboard: React.FC = () => {
 
   // Kanban Column Filters - now based on filteredTrucks
   const overdueMissingPartsTrucks = useMemo(() =>
-    filteredTrucks.filter(truck => truck.status === 'Overdue - Not Ready')
+    // Defensive check: Ensure filteredTrucks is an array before filtering
+    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Overdue - Not Ready')
     .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
     [filteredTrucks]
   );
 
   const notReadyMissingPartsTrucks = useMemo(() =>
-    filteredTrucks.filter(truck => truck.status === 'Not Ready')
+    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Not Ready')
     .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
     [filteredTrucks]
   );
 
   const overdueReadyToPlanTrucks = useMemo(() =>
-    prioritizedTrucks.filter(truck => truck.status === 'Overdue - Ready to Plan' && filteredTrucks.some(ft => ft.id === truck.id)),
-    [prioritizedTrucks, filteredTrucks]
-  );
-
-  const readyToPlanTrucks = useMemo(() =>
-    prioritizedTrucks.filter(truck => truck.status === 'Ready to Plan' && filteredTrucks.some(ft => ft.id === truck.id)),
-    [prioritizedTrucks, filteredTrucks]
-  );
-
-  const assignedTrucks = useMemo(() =>
-    filteredTrucks.filter(truck => truck.status === 'Assigned'),
+    // Use filteredTrucks directly for these columns, as prioritizedTrucks is a subset
+    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Overdue - Ready to Plan')
+    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
     [filteredTrucks]
   );
 
-  const partialTrucks = useMemo(() => filteredTrucks.filter(truck => truck.status === 'Partial'), [filteredTrucks]);
-  const readyToFinishTrucks = useMemo(() => filteredTrucks.filter(truck => truck.status === 'Ready to Finish'), [filteredTrucks]);
-  const completedTrucks = useMemo(() => filteredTrucks.filter(truck => truck.status === 'Completed'), [filteredTrucks]);
+  const readyToPlanTrucks = useMemo(() =>
+    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Ready to Plan')
+    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
+    [filteredTrucks]
+  );
+
+  const assignedTrucks = useMemo(() =>
+    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Assigned'),
+    [filteredTrucks]
+  );
+
+  const partialTrucks = useMemo(() => (Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Partial'), [filteredTrucks]);
+  const readyToFinishTrucks = useMemo(() => (Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Ready to Finish'), [filteredTrucks]);
+  const completedTrucks = useMemo(() => (Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Completed'), [filteredTrucks]);
 
   // Debugging the final lists
   useEffect(() => {
@@ -106,6 +121,11 @@ const Dashboard: React.FC = () => {
 
 
   const filteredOperators = useMemo(() => {
+    // Defensive check: Ensure operators is an array before filtering
+    if (!Array.isArray(operators)) {
+      console.error('`operators` is not an array in filteredOperators useMemo:', operators);
+      return [];
+    }
     const lowercasedSearchTerm = searchTerm.toLowerCase();
     return operators.filter(operator =>
       operator.name.toLowerCase().includes(lowercasedSearchTerm) ||
@@ -133,28 +153,8 @@ const Dashboard: React.FC = () => {
         return; // Show warning first, then allow re-click to proceed
       }
 
-      setTrucks(prevTrucks =>
-        prevTrucks.map(truck =>
-          truck.id === selectedTruckId
-            ? { ...truck, assignedOperatorIds: [...truck.assignedOperatorIds, selectedOperatorId], status: 'Assigned' }
-            : truck
-        )
-      );
-
-      setOperators(prevOperators =>
-        prevOperators.map(operator =>
-          operator.id === selectedOperatorId
-            ? {
-                ...operator,
-                assignedTrucks: [
-                  ...operator.assignedTrucks,
-                  trucks.find(t => t.id === selectedTruckId)!,
-                ],
-                status: 'Busy',
-              }
-            : operator
-        )
-      );
+      // Use the assignOperatorToTruck from context
+      assignOperatorToTruck(selectedTruckId, selectedOperatorId);
 
       setIsAssignDialogOpen(false);
       setSelectedTruckId(null);
@@ -164,24 +164,27 @@ const Dashboard: React.FC = () => {
   };
 
   const availableOperators = useMemo(() => {
-    if (!selectedTruckId) return [];
+    if (!selectedTruckId || !Array.isArray(trucks) || !Array.isArray(operators)) return []; // Defensive checks
     const truckToAssign = trucks.find(t => t.id === selectedTruckId);
     if (!truckToAssign) return [];
 
+    // Use getGeneralRepairTypesNeeded for competency matching
+    const neededCompetencies = getGeneralRepairTypesNeeded(truckToAssign);
+
     return operators.filter(op =>
       op.status === 'Available' &&
-      op.competencies.includes(truckToAssign.repairType)
-    );
+      neededCompetencies.some(comp => op.competencies.includes(comp)) // Check if operator has *any* needed competency
+    ).sort((a, b) => b.efficiency - a.efficiency); // Prioritize more efficient operators
   }, [operators, selectedTruckId, trucks]);
 
   const selectedOperatorAvailableHours = useMemo(() => {
-    if (!selectedOperatorId) return 0;
+    if (!selectedOperatorId || !Array.isArray(operators)) return 0; // Defensive check
     const operator = operators.find(op => op.id === selectedOperatorId);
     return operator ? getAvailableShiftHours(operator) : 0;
   }, [selectedOperatorId, operators]);
 
   const selectedTruckRepairTime = useMemo(() => {
-    if (!selectedTruckId) return 0;
+    if (!selectedTruckId || !Array.isArray(trucks)) return 0; // Defensive check
     const truck = trucks.find(t => t.id === selectedTruckId);
     return truck ? truck.repairTimeEstimate : 0;
   }, [selectedTruckId, trucks]);
