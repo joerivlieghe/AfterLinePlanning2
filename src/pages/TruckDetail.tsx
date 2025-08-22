@@ -8,10 +8,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime, getAvailableShiftHours, generateNextDays } from '@/lib/data';
+import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime, getAvailableShiftHours, generateNextDays, getGeneralRepairTypesNeeded } from '@/lib/data'; // Added getGeneralRepairTypesNeeded
 import { Deviation, MissingPart, Operator, RepairType, Shift } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon } from 'lucide-react';
+import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon, GlobeIcon, BuildingIcon } from 'lucide-react';
 import { format, isToday, isTomorrow } from 'date-fns';
 
 const TruckDetail: React.FC = () => {
@@ -127,10 +127,11 @@ const TruckDetail: React.FC = () => {
   };
 
   const truckRequiredCompetencies = useMemo(() => {
-    const competencies = new Set<RepairType>();
-    if (truck.repairType) {
-      competencies.add(truck.repairType);
-    }
+    // Use getGeneralRepairTypesNeeded for general repair competencies
+    const generalCompetencies = getGeneralRepairTypesNeeded(truck);
+    const competencies = new Set<RepairType>(generalCompetencies);
+
+    // Add specific customer adaptation competencies if applicable
     if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
       if (truck.customerAdaptationType === 'Mechanical') {
         competencies.add('Customer Adaptation - Mechanical');
@@ -138,8 +139,13 @@ const TruckDetail: React.FC = () => {
         competencies.add('Customer Adaptation - Paint');
       }
     }
+    // Add paint competency if the truck's primary repair type is paint
+    if (truck.repairType === 'Paint') {
+      competencies.add('Paint');
+    }
+
     return Array.from(competencies);
-  }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted, truck.customerAdaptationType]);
+  }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted, truck.customerAdaptationType, truck.deviations, truck.missingParts]);
 
   const dayOptions = useMemo(() => {
     const next7Days = generateNextDays(7);
@@ -215,6 +221,10 @@ const TruckDetail: React.FC = () => {
                 <CalendarIcon className="mr-2 h-5 w-5 text-muted-foreground" />
                 <span>Delivery Date: {formatDate(truck.deliveryDate)}</span>
               </div>
+							<div className="flex items-center text-base">
+                <CalendarIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                <span>Invoice Date: <span className="font-medium">{formatDate(truck.invoiceDate)}</span></span>
+              </div>
               <div className="flex items-center text-base">
                 <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
                 <span>Total Est. Repair Time: {truck.repairTimeEstimate} hrs</span>
@@ -259,6 +269,16 @@ const TruckDetail: React.FC = () => {
                   <span>Project Code: <Badge variant="secondary">{truck.projectCode}</Badge></span>
                 </div>
               )}
+              {/* New: Customer, Market, Invoice Date */}
+              <div className="flex items-center text-base">
+                <BuildingIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                <span>Customer: <span className="font-medium">{truck.customer}</span></span>
+              </div>
+              <div className="flex items-center text-base">
+                <GlobeIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                <span>Market: <span className="font-medium">{truck.market}</span></span>
+              </div>
+
             </div>
 
             {truck.customerAdaptationWork && (

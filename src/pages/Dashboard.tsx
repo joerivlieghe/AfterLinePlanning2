@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'; // Added useEffect for debugging
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import TruckCard from '@/components/TruckCard';
 import OperatorCard from '@/components/OperatorCard';
@@ -6,12 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { getAvailableShiftHours, getStatusColor } from '@/lib/data';
-import { SearchIcon, UsersIcon, WrenchIcon, CheckCircleIcon, ClockIcon, AlertCircleIcon, PackageXIcon, TruckIcon, UserPlusIcon } from 'lucide-react';
+import { getAvailableShiftHours, getStatusColor, getGeneralRepairTypesNeeded } from '@/lib/data';
+import { SearchIcon, UsersIcon, WrenchIcon, CheckCircleIcon, ClockIcon, AlertCircleIcon, PackageXIcon, TruckIcon, UserPlusIcon, BuildingIcon, GlobeIcon, FilterXIcon } from 'lucide-react';
 import { Truck, RepairType, TruckStatus } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { REPAIR_TYPES, CUSTOMER_PRIORITIES } from '@/lib/data'; // Import constants
+import { REPAIR_TYPES, CUSTOMER_PRIORITIES } from '@/lib/data';
 
 const ALL_TRUCK_STATUSES: TruckStatus[] = [
   'Pending', 'In Progress', 'Partial', 'Completed', 'Overdue',
@@ -20,7 +20,7 @@ const ALL_TRUCK_STATUSES: TruckStatus[] = [
 ];
 
 const Dashboard: React.FC = () => {
-  const { trucks, operators, prioritizedTrucks, allProjectCodes, assignOperatorToTruck, updateTruckStatus } = useAppContext(); // Added assignOperatorToTruck, updateTruckStatus
+  const { trucks, operators, assignOperatorToTruck, allProjectCodes, allCustomerNames, allMarkets } = useAppContext();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
@@ -31,34 +31,84 @@ const Dashboard: React.FC = () => {
   // Filter states
   const [filterRepairType, setFilterRepairType] = useState<RepairType | 'all'>('all');
   const [filterProjectCode, setFilterProjectCode] = useState<string | 'all'>('all');
-  // Removed filterStatus state as it's redundant with Kanban columns
   const [filterCustomerPriority, setFilterCustomerPriority] = useState<Truck['customerPriority'] | 'all'>('all');
+  const [filterCustomer, setFilterCustomer] = useState<string | 'all'>('all');
+  const [filterMarket, setFilterMarket] = useState<string | 'all'>('all');
+
+  // Helper function to apply filters
+  const applyFilters = (truckList: Truck[], currentFilterKey?: keyof Truck | 'repairType' | 'customerPriority') => {
+    return truckList.filter(truck => {
+      const matchesRepairType = currentFilterKey === 'repairType' || filterRepairType === 'all' || truck.repairType === filterRepairType;
+      const matchesProjectCode = currentFilterKey === 'projectCode' || filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
+      const matchesCustomerPriority = currentFilterKey === 'customerPriority' || filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
+      const matchesCustomer = currentFilterKey === 'customer' || filterCustomer === 'all' || truck.customer === filterCustomer;
+      const matchesMarket = currentFilterKey === 'market' || filterMarket === 'all' || truck.market === filterMarket;
+      return matchesRepairType && matchesProjectCode && matchesCustomerPriority && matchesCustomer && matchesMarket;
+    });
+  };
+
+  // Memoized options for each filter, dynamically updated based on other filters
+  const availableRepairTypes = useMemo(() => {
+    const filteredByOthers = applyFilters(trucks, 'repairType');
+    const types = new Set<RepairType>();
+    filteredByOthers.forEach(truck => types.add(truck.repairType));
+    return Array.from(types).sort();
+  }, [trucks, filterProjectCode, filterCustomerPriority, filterCustomer, filterMarket]);
+
+  const availableProjectCodes = useMemo(() => {
+    const filteredByOthers = applyFilters(trucks, 'projectCode');
+    const codes = new Set<string>();
+    filteredByOthers.forEach(truck => {
+      if (truck.projectCode) codes.add(truck.projectCode);
+    });
+    return Array.from(codes).sort();
+  }, [trucks, filterRepairType, filterCustomerPriority, filterCustomer, filterMarket]);
+
+  const availableCustomerPriorities = useMemo(() => {
+    const filteredByOthers = applyFilters(trucks, 'customerPriority');
+    const priorities = new Set<Truck['customerPriority']>();
+    filteredByOthers.forEach(truck => priorities.add(truck.customerPriority));
+    return Array.from(priorities).sort((a, b) => {
+      const order = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
+      return (order[b] || 0) - (order[a] || 0);
+    });
+  }, [trucks, filterRepairType, filterProjectCode, filterCustomer, filterMarket]);
+
+  const availableCustomerNames = useMemo(() => {
+    const filteredByOthers = applyFilters(trucks, 'customer');
+    const names = new Set<string>();
+    filteredByOthers.forEach(truck => names.add(truck.customer));
+    return Array.from(names).sort();
+  }, [trucks, filterRepairType, filterProjectCode, filterCustomerPriority, filterMarket]);
+
+  const availableMarkets = useMemo(() => {
+    const filteredByOthers = applyFilters(trucks, 'market');
+    const markets = new Set<string>();
+    filteredByOthers.forEach(truck => markets.add(truck.market));
+    return Array.from(markets).sort();
+  }, [trucks, filterRepairType, filterProjectCode, filterCustomerPriority, filterCustomer]);
+
 
   // Memoized filtered trucks based on all filters (excluding status)
   const filteredTrucks = useMemo(() => {
-    // Defensive check: Ensure trucks is an array before filtering
     if (!Array.isArray(trucks)) {
       console.error('`trucks` is not an array in filteredTrucks useMemo:', trucks);
-      return []; // Return an empty array to prevent the filter error
+      return [];
     }
-
-    console.log('Filtering trucks. Total trucks:', trucks.length); // Debug log
-    console.log('Current filters:', { filterRepairType, filterProjectCode, filterCustomerPriority }); // Debug log
 
     const result = trucks.filter(truck => {
       const matchesRepairType = filterRepairType === 'all' || truck.repairType === filterRepairType;
       const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
-      // Removed matchesStatus from here
       const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
-      return matchesRepairType && matchesProjectCode && matchesCustomerPriority;
+      const matchesCustomer = filterCustomer === 'all' || truck.customer === filterCustomer;
+      const matchesMarket = filterMarket === 'all' || truck.market === filterMarket;
+      return matchesRepairType && matchesProjectCode && matchesCustomerPriority && matchesCustomer && matchesMarket;
     });
-    console.log('Filtered trucks count:', result.length); // Debug log
     return result;
-  }, [trucks, filterRepairType, filterProjectCode, filterCustomerPriority]);
+  }, [trucks, filterRepairType, filterProjectCode, filterCustomerPriority, filterCustomer, filterMarket]);
 
   // Kanban Column Filters - now based on filteredTrucks
   const overdueMissingPartsTrucks = useMemo(() =>
-    // Defensive check: Ensure filteredTrucks is an array before filtering
     (Array.isArray(filteredTrucks) ? filteredTrucks : [])
     .filter(truck => truck.status === 'Overdue - Not Ready')
     .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
@@ -73,7 +123,6 @@ const Dashboard: React.FC = () => {
   );
 
   const overdueReadyToPlanTrucks = useMemo(() =>
-    // Use filteredTrucks directly for these columns, as prioritizedTrucks is a subset
     (Array.isArray(filteredTrucks) ? filteredTrucks : [])
     .filter(truck => truck.status === 'Overdue - Ready to Plan')
     .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
@@ -121,7 +170,6 @@ const Dashboard: React.FC = () => {
 
 
   const filteredOperators = useMemo(() => {
-    // Defensive check: Ensure operators is an array before filtering
     if (!Array.isArray(operators)) {
       console.error('`operators` is not an array in filteredOperators useMemo:', operators);
       return [];
@@ -153,7 +201,6 @@ const Dashboard: React.FC = () => {
         return; // Show warning first, then allow re-click to proceed
       }
 
-      // Use the assignOperatorToTruck from context
       assignOperatorToTruck(selectedTruckId, selectedOperatorId);
 
       setIsAssignDialogOpen(false);
@@ -164,33 +211,40 @@ const Dashboard: React.FC = () => {
   };
 
   const availableOperators = useMemo(() => {
-    if (!selectedTruckId || !Array.isArray(trucks) || !Array.isArray(operators)) return []; // Defensive checks
+    if (!selectedTruckId || !Array.isArray(trucks) || !ArrayArray.isArray(operators)) return [];
     const truckToAssign = trucks.find(t => t.id === selectedTruckId);
     if (!truckToAssign) return [];
 
-    // Use getGeneralRepairTypesNeeded for competency matching
     const neededCompetencies = getGeneralRepairTypesNeeded(truckToAssign);
 
     return operators.filter(op =>
       op.status === 'Available' &&
-      neededCompetencies.some(comp => op.competencies.includes(comp)) // Check if operator has *any* needed competency
-    ).sort((a, b) => b.efficiency - a.efficiency); // Prioritize more efficient operators
+      neededCompetencies.some(comp => op.competencies.includes(comp))
+    ).sort((a, b) => b.efficiency - a.efficiency);
   }, [operators, selectedTruckId, trucks]);
 
   const selectedOperatorAvailableHours = useMemo(() => {
-    if (!selectedOperatorId || !Array.isArray(operators)) return 0; // Defensive check
+    if (!selectedOperatorId || !Array.isArray(operators)) return 0;
     const operator = operators.find(op => op.id === selectedOperatorId);
     return operator ? getAvailableShiftHours(operator) : 0;
   }, [selectedOperatorId, operators]);
 
   const selectedTruckRepairTime = useMemo(() => {
-    if (!selectedTruckId || !Array.isArray(trucks)) return 0; // Defensive check
+    if (!selectedTruckId || !Array.isArray(trucks)) return 0;
     const truck = trucks.find(t => t.id === selectedTruckId);
     return truck ? truck.repairTimeEstimate : 0;
   }, [selectedTruckId, trucks]);
 
   const handleOpenWizard = () => {
     navigate('/operators', { state: { openWizard: true } });
+  };
+
+  const handleClearFilters = () => {
+    setFilterRepairType('all');
+    setFilterProjectCode('all');
+    setFilterCustomerPriority('all');
+    setFilterCustomer('all');
+    setFilterMarket('all');
   };
 
   return (
@@ -212,7 +266,7 @@ const Dashboard: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Repair Types</SelectItem>
-              {REPAIR_TYPES.map(type => (
+              {availableRepairTypes.map(type => (
                 <SelectItem key={type} value={type}>{type}</SelectItem>
               ))}
             </SelectContent>
@@ -226,13 +280,12 @@ const Dashboard: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Project Codes</SelectItem>
-              {allProjectCodes.map(code => (
+              {availableProjectCodes.map(code => (
                 <SelectItem key={code} value={code}>{code}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        {/* Removed Status Filter dropdown */}
         <div>
           <label htmlFor="priorityFilter" className="block text-sm font-medium text-gray-700 mb-1">Customer Priority</label>
           <Select value={filterCustomerPriority} onValueChange={value => setFilterCustomerPriority(value as Truck['customerPriority'] | 'all')}>
@@ -241,11 +294,44 @@ const Dashboard: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Priorities</SelectItem>
-              {CUSTOMER_PRIORITIES.map(priority => (
+              {availableCustomerPriorities.map(priority => (
                 <SelectItem key={priority} value={priority}>{priority}</SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div>
+          <label htmlFor="customerFilter" className="block text-sm font-medium text-gray-700 mb-1">Customer</label>
+          <Select value={filterCustomer} onValueChange={value => setFilterCustomer(value)}>
+            <SelectTrigger id="customerFilter">
+              <SelectValue placeholder="All Customers" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Customers</SelectItem>
+              {availableCustomerNames.map(customer => (
+                <SelectItem key={customer} value={customer}>{customer}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="marketFilter" className="block text-sm font-medium text-gray-700 mb-1">Market</label>
+          <Select value={filterMarket} onValueChange={value => setFilterMarket(value)}>
+            <SelectTrigger id="marketFilter">
+              <SelectValue placeholder="All Markets" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Markets</SelectItem>
+              {availableMarkets.map(market => (
+                <SelectItem key={market} value={market}>{market}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-end">
+          <Button onClick={handleClearFilters} variant="outline" className="w-full">
+            <FilterXIcon className="mr-2 h-4 w-4" /> Clear All Filters
+          </Button>
         </div>
       </div>
 
@@ -254,10 +340,10 @@ const Dashboard: React.FC = () => {
         {/* Overdue - Missing Parts Column */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-2 text-gray-800 flex items-center">
-            <AlertCircleIcon className="mr-2 h-5 w-5 text-red-600" /> Overdue - Missing Parts ({overdueMissingPartsTrucks.length})
+            <AlertCircleIcon className="mr-2 h-5 w-5 text-red-600" /> Overdue - Not Ready ({overdueMissingPartsTrucks.length})
           </h2>
           <p className="text-sm text-muted-foreground mb-4">Priority score is 0 due to pending missing parts.</p>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {overdueMissingPartsTrucks.length > 0 ? (
                 overdueMissingPartsTrucks.map(truck => (
@@ -273,10 +359,10 @@ const Dashboard: React.FC = () => {
         {/* Not Ready - Missing Parts Column */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-2 text-gray-800 flex items-center">
-            <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Not Ready - Missing Parts ({notReadyMissingPartsTrucks.length})
+            <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Not Ready ({notReadyMissingPartsTrucks.length})
           </h2>
           <p className="text-sm text-muted-foreground mb-4">Priority score is 0 due to pending missing parts.</p>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {notReadyMissingPartsTrucks.length > 0 ? (
                 notReadyMissingPartsTrucks.map(truck => (
@@ -294,7 +380,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <AlertCircleIcon className="mr-2 h-5 w-5 text-red-700" /> Overdue - Ready ({overdueReadyToPlanTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {overdueReadyToPlanTrucks.length > 0 ? (
                 overdueReadyToPlanTrucks.map(truck => (
@@ -312,7 +398,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <ClockIcon className="mr-2 h-5 w-5 text-blue-600" /> Ready to Plan ({readyToPlanTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {readyToPlanTrucks.length > 0 ? (
                 readyToPlanTrucks.map(truck => (
@@ -330,7 +416,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <UserPlusIcon className="mr-2 h-5 w-5 text-indigo-600" /> Assigned ({assignedTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {assignedTrucks.length > 0 ? (
                 assignedTrucks.map(truck => (
@@ -348,7 +434,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <WrenchIcon className="mr-2 h-5 w-5 text-orange-600" /> Partial ({partialTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {partialTrucks.length > 0 ? (
                 partialTrucks.map(truck => (
@@ -366,7 +452,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <WrenchIcon className="mr-2 h-5 w-5 text-yellow-600" /> Ready to Finish ({readyToFinishTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {readyToFinishTrucks.length > 0 ? (
                 readyToFinishTrucks.map(truck => (
@@ -384,7 +470,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <CheckCircleIcon className="mr-2 h-5 w-5 text-green-600" /> Completed ({completedTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {completedTrucks.length > 0 ? (
                 completedTrucks.map(truck => (
