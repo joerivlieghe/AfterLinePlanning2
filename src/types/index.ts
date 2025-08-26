@@ -53,9 +53,6 @@ export interface Truck {
   assignedOperatorIds: string[];
   status: TruckStatus;
   projectCode?: string;
-  customer: string; // New field
-  market: string; // New field
-  invoiceDate: Date; // New field
 }
 
 export interface Operator {
