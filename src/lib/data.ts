@@ -485,7 +485,7 @@ export const simulatePaintBoothSchedule = (
   const occupancyData: DailyOccupancy[] = Array.from({ length: numDays }).map((_, i) => {
     const date = addDays(today, i);
     return {
-      date: format(date, 'yyyy-MM-DD'),
+      date: format(date, 'yyyy-MM-dd'),
       totalScheduledHours: 0,
       smallBoothScheduledHours: 0,
       largeBoothScheduledHours: 0,
@@ -683,7 +683,7 @@ export const simulateGeneralRepairSchedule = (
     const date = addDays(today, i);
     const totalAvailableOperatorHours = operators.length * GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR;
     return {
-      date: format(date, 'yyyy-MM-DD'),
+      date: format(date, 'yyyy-MM-dd'),
       totalScheduledHours: 0,
       availableCapacity: totalAvailableOperatorHours,
       operatorWorkload: {},

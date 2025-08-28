@@ -6,6 +6,7 @@ export type OperatorStatus = 'Available' | 'Busy' | 'On Break' | 'Off Duty';
 export type Shift = 'Early' | 'Late';
 export type PaintBoothType = 'Small' | 'Large';
 export type Market = 'Germany' | 'France' | 'Spain' | 'Italy' | 'United Kingdom' | 'Sweden' | 'Norway' | 'Finland' | 'Denmark' | 'Netherlands' | 'Belgium' | 'Austria' | 'Switzerland' | 'Poland' | 'Czech Republic' | 'Portugal' | 'Ireland' | 'Greece';
+export type CustomerPriority = 'Low' | 'Medium' | 'High' | 'Critical'; // Added CustomerPriority type
 
 export interface Deviation {
   id: string;
@@ -21,7 +22,8 @@ export interface MissingPart {
   id: string;
   name: string;
   status: MissingPartStatus;
-  promisedDeliveryDate: Date;
+  orderDate: Date; // Changed from promisedDeliveryDate
+  estimatedArrival: Date; // New field
   completed: boolean;
   completedBy: string | null;
   completedAt: Date | null;
@@ -30,7 +32,10 @@ export interface MissingPart {
 
 export interface Truck {
   id: string;
+  name: string; // Added name field
   chassisNumber: string;
+  model: string; // Added model field
+  year: number; // Added year field
   deviations: Deviation[];
   missingParts: MissingPart[];
   customerAdaptationWork: string | null;
@@ -38,25 +43,26 @@ export interface Truck {
   customerAdaptationCompleted?: boolean;
   customerAdaptationCompletedBy?: string | null;
   customerAdaptationCompletedAt?: Date | null;
-  customerAdaptationType?: 'Mechanical' | 'Paint'; // Updated: Removed 'General'
-  paintDetails?: { // New field for paint-specific details
+  customerAdaptationType?: 'Mechanical' | 'Paint';
+  paintDetails?: {
     color: string;
     paintBoothType: PaintBoothType;
   };
-  okToDrive: boolean;
-  repairTimeEstimate: number; // This will now be the primary estimate for its main repair type
-  deviationTimeEstimate?: number; // Raw deviation time
-  missingPartsTimeEstimate?: number; // Raw missing parts time
-  repairType: RepairType;
-  repairAreaNeeded: RepairArea;
+  okToDrive?: boolean; // Made optional
+  repairTimeEstimate: number;
+  deviationTimeEstimate?: number;
+  missingPartsTimeEstimate?: number;
+  repairType?: RepairType; // Made optional
+  repairAreaNeeded?: RepairArea; // Made optional
   deliveryDate: Date;
-  invoiceDate: Date; // New field for invoice date
-  customerPriority: 'Low' | 'Medium' | 'High' | 'Critical';
+  invoiceDate: Date;
+  customer: string; // Added customer field
+  customerPriority: CustomerPriority;
   assignedOperatorIds: string[];
   status: TruckStatus;
   projectCode?: string;
-  customerDetails: string; // New field
-  market: Market; // New field, now specific European countries
+  customerDetails?: string; // Made optional
+  market: Market;
 }
 
 export interface Operator {
@@ -76,26 +82,22 @@ export interface ScheduledTruckDetail {
   chassisNumber: string;
   repairType: RepairType;
   hoursScheduled: number;
-  paintBoothType?: PaintBoothType; // Optional for general repair
-  operatorId?: string; // For general repair
-  operatorName?: string; // For general repair
+  paintBoothType?: PaintBoothType;
+  operatorId?: string;
+  operatorName?: string;
 }
 
 export interface DailyPaintBoothOccupancy {
   date: string;
-  // Total hours for chart (stacked)
   totalScheduledHours: number;
-  // Granular hours for clustered/stacked chart
   smallBoothPaintHours: number;
   smallBoothCAPaintHours: number;
   largeBoothPaintHours: number;
   largeBoothCAPaintHours: number;
-  // Capacity tracking
   smallBoothScheduledHours: number;
   largeBoothScheduledHours: number;
-  availableCapacity: number; // Total available capacity
+  availableCapacity: number;
   capacityProblem: boolean;
-  // Details for daily schedule tables
   smallBoothScheduledTrucksDetails: ScheduledTruckDetail[];
   largeBoothScheduledTrucksDetails: ScheduledTruckDetail[];
 }
@@ -103,7 +105,7 @@ export interface DailyPaintBoothOccupancy {
 export interface DailyOperatorOccupancy {
   date: string;
   totalScheduledHours: number;
-  availableCapacity: number; // Total available operator hours for the day
+  availableCapacity: number;
   capacityProblem: boolean;
   scheduledTrucksDetails: ScheduledTruckDetail[];
   operatorWorkload: {
@@ -123,5 +125,12 @@ export interface TruckPlanningSummary {
   estimatedGeneralRepairCompletionDate: Date | null;
   overallEstimatedCompletionDate: Date | null;
   isProjectedOverdue: boolean;
-  isPlanningAccepted: boolean; // Conceptual for "Accept/Assign"
+  isPlanningAccepted: boolean;
+  priorityScore: number; // New field
+  priorityReasons: string[]; // New field
+}
+
+export interface MarketInvoiceDelta {
+  market: Market;
+  deltaDays: number;
 }

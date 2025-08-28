@@ -1,21 +1,22 @@
 import React, { useMemo, useState } from 'react';
 import { useAppContext } from '@/context/AppContext';
-import { TruckPlanningSummary } from '@/types';
+import { TruckPlanningSummary, ScheduledOperatorDetail } from '@/types';
 import { format, addDays, isAfter, isBefore, startOfDay } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { getPriorityColor, getStatusColor, simulatePaintBoothSchedule, SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS, LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS, simulateGeneralRepairSchedule, getGeneralRepairTypesNeeded } from '@/lib/data'; // Import getGeneralRepairTypesNeeded
+import { getPriorityColor, getStatusColor, simulatePaintBoothSchedule, SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS, LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS, simulateGeneralRepairSchedule, getGeneralRepairTypesNeeded, getPriorityScore } from '@/lib/data'; // Import getPriorityScore
 import { Badge } from '@/components/ui/badge';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast'; // Import useToast
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'; // Import Tooltip components
 
 const TruckPlanningSummaryPage: React.FC = () => {
-  const { trucks, operators, assignOperatorToTruck, updateTruckStatus } = useAppContext(); // Added assignOperatorToTruck, updateTruckStatus
-  const [numDays] = useState(60); // Simulate for a longer period to ensure completion dates are found
-  const [acceptedPlans, setAcceptedPlans] = useState<Set<string>>(new Set());
-  const { toast } = useToast(); // Initialize toast
+  const { trucks, operators, assignOperatorToTruck, updateTruckStatus } = useAppContext();
+  const [numDays] = useState(60);
+  const [acceptedPlans, setAcceptedPlans] = useState(new Set<string>());
+  const { toast } = useToast();
 
   // Simulate paint booth schedule for all trucks that need paint
   const { occupancyData: paintOccupancyData, truckCompletionDates: paintTruckCompletionDates } = useMemo(() => {
@@ -80,12 +81,14 @@ const TruckPlanningSummaryPage: React.FC = () => {
         overallEstimatedCompletionDate: null,
         isProjectedOverdue: false,
         isPlanningAccepted: acceptedPlans.has(truck.id),
+        priorityScore: 0, // Initialize
+        priorityReasons: [], // Initialize
       });
     });
 
     // Populate paint schedule
-    paintOccupancyData.forEach(dayEntry => {
-      [...dayEntry.smallBoothScheduledTrucksDetails, ...dayEntry.largeBoothScheduledTrucksDetails].forEach(detail => {
+    (paintOccupancyData || []).forEach(dayEntry => {
+      [...(dayEntry.smallBoothScheduledTrucksDetails || []), ...(dayEntry.largeBoothScheduledTrucksDetails || [])].forEach(detail => {
         const entry = summaryMap.get(detail.truckId);
         if (entry) {
           entry.paintSchedule.push({
@@ -98,20 +101,34 @@ const TruckPlanningSummaryPage: React.FC = () => {
     });
 
     // Populate general repair schedule
-    generalRepairOccupancyData.forEach(dayEntry => {
-      dayEntry.scheduledTrucksDetails.forEach(detail => {
-        const entry = summaryMap.get(detail.truckId);
-        if (entry) {
-          entry.generalRepairSchedule.push({
-            date: dayEntry.date,
-            operatorName: detail.operatorName!,
-            hours: detail.hoursScheduled,
-          });
-        }
-      });
+    (generalRepairOccupancyData || []).forEach(dayEntry => {
+      // Ensure dayEntry.operatorWorkload is an object before calling Object.values
+      if (dayEntry.operatorWorkload && typeof dayEntry.operatorWorkload === 'object') {
+        Object.values(dayEntry.operatorWorkload).forEach(operatorDetail => {
+          // Ensure operatorDetail is an object and has expected properties
+          if (operatorDetail && typeof operatorDetail === 'object' && 'operatorName' in operatorDetail && 'trucks' in operatorDetail) {
+            const typedOperatorDetail = operatorDetail as ScheduledOperatorDetail; // Cast for type safety
+            let trucksToIterate: any[] = [];
+            if (Array.isArray(typedOperatorDetail.trucks)) {
+              trucksToIterate = typedOperatorDetail.trucks;
+            }
+            
+            trucksToIterate.forEach(detail => {
+              const entry = summaryMap.get(detail.truckId);
+              if (entry) {
+                entry.generalRepairSchedule.push({
+                  date: dayEntry.date,
+                  operatorName: typedOperatorDetail.operatorName,
+                  hours: detail.hours,
+                });
+              }
+            });
+          }
+        });
+      }
     });
 
-    // Calculate estimated completion dates and overdue status
+    // Calculate estimated completion dates and overdue status, and priority score
     summaryMap.forEach(summary => {
       const needsPaint = (summary.truck.repairType === 'Paint' || summary.truck.customerAdaptationType === 'Paint');
       const needsGeneralRepair = (summary.truck.deviationTimeEstimate || 0) > 0 || (summary.truck.missingPartsTimeEstimate || 0) > 0;
@@ -122,9 +139,7 @@ const TruckPlanningSummaryPage: React.FC = () => {
       let maxCompletionDate: Date | null = null;
 
       if (needsPaint && needsGeneralRepair) {
-        // For trucks needing both, overall completion is the later of the two,
-        // which is already handled by the sequential simulation for general repair.
-        maxCompletionDate = summary.estimatedGeneralRepairCompletionDate; // General repair starts after paint
+        maxCompletionDate = summary.estimatedGeneralRepairCompletionDate;
       } else if (needsPaint) {
         maxCompletionDate = summary.estimatedPaintCompletionDate;
       } else if (needsGeneralRepair) {
@@ -135,11 +150,22 @@ const TruckPlanningSummaryPage: React.FC = () => {
 
       summary.isProjectedOverdue = summary.overallEstimatedCompletionDate
         ? isAfter(summary.overallEstimatedCompletionDate, summary.truck.deliveryDate)
-        : false; // If no completion date, assume not overdue yet or not scheduled
+        : false;
+
+      // Calculate priority score
+      const calculatedDueDate = summary.overallEstimatedCompletionDate || summary.truck.deliveryDate;
+      const { totalScore, reasons } = getPriorityScore(summary.truck, calculatedDueDate);
+      summary.priorityScore = totalScore;
+      summary.priorityReasons = reasons;
     });
 
     return Array.from(summaryMap.values()).sort((a, b) => {
-      // Sort by overall estimated completion date, then delivery date, then priority
+      // Primary sort: Priority Score (highest first)
+      if (a.priorityScore !== b.priorityScore) {
+        return b.priorityScore - a.priorityScore;
+      }
+
+      // Secondary sort: overall estimated completion date (earliest first)
       if (a.overallEstimatedCompletionDate && b.overallEstimatedCompletionDate) {
         const completionDiff = a.overallEstimatedCompletionDate.getTime() - b.overallEstimatedCompletionDate.getTime();
         if (completionDiff !== 0) return completionDiff;
@@ -149,9 +175,11 @@ const TruckPlanningSummaryPage: React.FC = () => {
         return 1;
       }
 
+      // Tertiary sort: delivery date (earliest first)
       const deliveryDiff = a.truck.deliveryDate.getTime() - b.truck.deliveryDate.getTime();
       if (deliveryDiff !== 0) return deliveryDiff;
 
+      // Quaternary sort: customer priority (Critical > High > Medium > Low)
       const priorityOrder = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
       return (priorityOrder[b.truck.customerPriority] || 0) - (priorityOrder[a.truck.customerPriority] || 0);
     });
@@ -252,6 +280,7 @@ const TruckPlanningSummaryPage: React.FC = () => {
                     <TableHead className="min-w-[120px]">Delivery Date</TableHead>
                     <TableHead className="min-w-[120px]">Est. Completion</TableHead>
                     <TableHead className="min-w-[100px]">Status</TableHead>
+                    <TableHead className="min-w-[100px]">Priority Score</TableHead> {/* New column */}
                     <TableHead className="min-w-[250px]">Paint Schedule</TableHead>
                     <TableHead className="min-w-[250px]">General Repair Schedule</TableHead>
                     <TableHead className="min-w-[120px]">Action</TableHead>
@@ -281,11 +310,30 @@ const TruckPlanningSummaryPage: React.FC = () => {
                         )}
                       </TableCell>
                       <TableCell>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge className={getPriorityColor(summary.priorityScore)}>
+                                {summary.priorityScore}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="font-semibold">Priority Reasons:</p>
+                              <ul className="list-disc list-inside text-xs">
+                                {summary.priorityReasons.map((reason, idx) => (
+                                  <li key={idx}>{reason}</li>
+                                ))}
+                              </ul>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </TableCell>
+                      <TableCell>
                         {summary.paintSchedule.length > 0 ? (
                           <ul className="list-disc list-inside text-xs space-y-1">
                             {summary.paintSchedule.map((item, idx) => (
                               <li key={idx}>
-                                {format(new Date(item.date + ' ' + new Date().getFullYear()), 'MMM dd')}: {item.hours.toFixed(1)}h ({item.boothType})
+                                {format(new Date(item.date), 'MMM dd')}: {item.hours.toFixed(1)}h ({item.boothType})
                               </li>
                             ))}
                             {summary.estimatedPaintCompletionDate && (
@@ -301,7 +349,7 @@ const TruckPlanningSummaryPage: React.FC = () => {
                           <ul className="list-disc list-inside text-xs space-y-1">
                             {summary.generalRepairSchedule.map((item, idx) => (
                               <li key={idx}>
-                                {format(new Date(item.date + ' ' + new Date().getFullYear()), 'MMM dd')}: {item.hours.toFixed(1)}h ({item.operatorName})
+                                {format(new Date(item.date), 'MMM dd')}: {item.hours.toFixed(1)}h ({item.operatorName})
                               </li>
                             ))}
                             {summary.estimatedGeneralRepairCompletionDate && (
@@ -317,7 +365,7 @@ const TruckPlanningSummaryPage: React.FC = () => {
                           variant={summary.isPlanningAccepted ? "secondary" : "default"}
                           size="sm"
                           onClick={() => handleAcceptAssign(summary.truck.id)}
-                          disabled={summary.isPlanningAccepted || summary.truck.assignedOperatorIds.length > 0} // Disable if already assigned
+                          disabled={summary.isPlanningAccepted || summary.truck.assignedOperatorIds.length > 0}
                         >
                           {summary.isPlanningAccepted || summary.truck.assignedOperatorIds.length > 0 ? 'Accepted/Assigned' : 'Accept/Assign'}
                         </Button>
