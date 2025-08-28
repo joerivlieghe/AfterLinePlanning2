@@ -22,6 +22,7 @@ const OperatorView: React.FC = () => {
     markCustomerAdaptationComplete,
     unassignOperatorFromTruck,
     markTruckComplete,
+    getCalculatedDueDate, // Import getCalculatedDueDate
   } = useAppContext();
   const { toast } = useToast();
 
@@ -160,7 +161,8 @@ const OperatorView: React.FC = () => {
             <div className="space-y-6">
               {operator.assignedTrucks.length > 0 ? (
                 operator.assignedTrucks.map((truck) => {
-                  const truckPriorityBreakdown = getPriorityScore(truck);
+                  const calculatedDueDate = getCalculatedDueDate(truck); // Get the calculated due date
+                  const truckPriorityBreakdown = getPriorityScore(truck, calculatedDueDate); // Pass it to getPriorityScore
                   const truckPriorityScore = truckPriorityBreakdown.totalScore;
                   const allDeviationsCompleted = truck.deviations.every(dev => dev.completed);
                   const allMissingPartsCompleted = truck.missingParts.every(mp => mp.completed);
@@ -212,8 +214,8 @@ const OperatorView: React.FC = () => {
                               />
                               <Label htmlFor={`customer-adaptation-${truck.id}`} className="text-sm font-normal">
                                 {truck.customerAdaptationWork}
-                                {truck.customerAdaptationCompleted && (
-                                  <span className="ml-2 text-green-600">(Completed by {truck.customerAdaptationCompletedBy} on {formatDate(truck.customerAdaptationCompletedAt!)})</span>
+                                {truck.customerAdaptationCompleted && truck.customerAdaptationCompletedAt instanceof Date && !isNaN(truck.customerAdaptationCompletedAt.getTime()) && (
+                                  <span className="ml-2 text-green-600">(Completed by {truck.customerAdaptationCompletedBy} on {formatDate(truck.customerAdaptationCompletedAt)})</span>
                                 )}
                               </Label>
                             </div>
@@ -236,7 +238,7 @@ const OperatorView: React.FC = () => {
                                   />
                                   <Label htmlFor={`dev-${dev.id}`} className={`text-sm font-normal ${getSeverityColor(dev.severity)}`}>
                                     {dev.severity}: {dev.description}
-                                    {dev.completed && <span className="ml-2 text-green-600">(Completed by {dev.completedBy} on {formatDate(dev.completedAt!)})</span>}
+                                    {dev.completed && dev.completedAt instanceof Date && !isNaN(dev.completedAt.getTime()) && <span className="ml-2 text-green-600">(Completed by {dev.completedBy} on {formatDate(dev.completedAt)})</span>}
                                   </Label>
                                 </li>
                               ))}
@@ -260,12 +262,12 @@ const OperatorView: React.FC = () => {
                                   />
                                   <Label htmlFor={`part-${part.id}`} className="text-sm font-normal">
                                     {part.name} - <Badge className={getMissingPartStatusColor(part.status)}>{part.status}</Badge>
-                                    {part.status !== 'Available' && (
+                                    {part.status !== 'Available' && part.promisedDeliveryDate instanceof Date && !isNaN(part.promisedDeliveryDate.getTime()) && (
                                       <span className="ml-2 text-xs text-gray-500">
                                         (Est. Delivery: {formatDate(part.promisedDeliveryDate)})
                                       </span>
                                     )}
-                                    {part.completed && <span className="ml-2 text-green-600">(Completed by {part.completedBy} on {formatDate(part.completedAt!)})</span>}
+                                    {part.completed && part.completedAt instanceof Date && !isNaN(part.completedAt.getTime()) && <span className="ml-2 text-green-600">(Completed by {part.completedBy} on {formatDate(part.completedAt)})</span>}
                                   </Label>
                                 </li>
                               ))}

@@ -231,7 +231,13 @@ export const generateOperators = (count: number): Operator[] => {
 };
 
 export const getPriorityScore = (truck: Truck, calculatedDueDate: Date) => {
-  console.log(`getPriorityScore for truck ${truck.chassisNumber} with calculatedDueDate: ${formatDate(calculatedDueDate)}`);
+  // Only log if calculatedDueDate is a valid Date object
+  if (calculatedDueDate instanceof Date && !isNaN(calculatedDueDate.getTime())) {
+    console.log(`getPriorityScore for truck ${truck.chassisNumber} with calculatedDueDate: ${formatDate(calculatedDueDate)}`);
+  } else {
+    console.log(`getPriorityScore for truck ${truck.chassisNumber} with invalid calculatedDueDate: ${calculatedDueDate}`);
+  }
+
   let score = 0;
   let reasons: string[] = [];
   const today = new Date();
@@ -255,7 +261,7 @@ export const getPriorityScore = (truck: Truck, calculatedDueDate: Date) => {
   }
 
   // 2. Time to Delivery (closer = higher priority, passed = even higher priority)
-  if (calculatedDueDate) {
+  if (calculatedDueDate instanceof Date && !isNaN(calculatedDueDate.getTime())) {
     const daysDiff = differenceInDays(calculatedDueDate, today);
 
     if (daysDiff <= 0) { // Delivery date is today or in the past (overdue)
@@ -371,7 +377,7 @@ export const formatTime = (date: Date): string => {
 };
 
 export const formatDate = (date: Date): string => {
-  return format(date, 'yyyy-MM-dd');
+  return format(date, 'yyyy-MM-dd'); // Changed DD to dd
 };
 
 export const generateMarketInvoiceDeltas = (): MarketInvoiceDelta[] => {

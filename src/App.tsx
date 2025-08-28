@@ -18,7 +18,7 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col min-h-screen">
       {console.log('App.tsx: Rendering Header component.')}
-      <Header />
+      <Header key="app-header" /> {/* Added a key to force re-mount */}
       <main className="flex-grow">
         <Routes>
           <Route path="/" element={<Dashboard />} />

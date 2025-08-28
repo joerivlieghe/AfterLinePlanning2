@@ -15,7 +15,7 @@ import { Operator, Truck, Shift, RepairType, ProposedAssignment } from '@/types'
 import { useToast } from '@/hooks/use-toast';
 
 const OperatorSelection: React.FC = () => {
-  const { operators, trucks, prioritizedTrucks, assignOperatorToTruck } = useAppContext();
+  const { operators, trucks, prioritizedTrucks, assignOperatorToTruck, getCalculatedDueDate } = useAppContext();
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
@@ -105,7 +105,11 @@ const OperatorSelection: React.FC = () => {
 
     const newProposals: ProposedAssignment[] = [];
 
-    unassignedPrioritizedTrucks.sort((a, b) => getPriorityScore(b).totalScore - getPriorityScore(a).totalScore);
+    unassignedPrioritizedTrucks.sort((a, b) => {
+      const calculatedDueDateA = getCalculatedDueDate(a);
+      const calculatedDueDateB = getCalculatedDueDate(b);
+      return getPriorityScore(b, calculatedDueDateB).totalScore - getPriorityScore(a, calculatedDueDateA).totalScore;
+    });
 
     for (const truck of unassignedPrioritizedTrucks) {
       const totalTruckWorkTime = truck.repairTimeEstimate; // repairTimeEstimate already includes CA time
@@ -351,7 +355,7 @@ const OperatorSelection: React.FC = () => {
                             <TableCell className="font-medium">{proposal.truck.chassisNumber}</TableCell>
                             <TableCell>{proposal.truck.repairType}</TableCell>
                             <TableCell>{(proposal.truck.repairTimeEstimate).toFixed(2)} hrs</TableCell>
-                            <TableCell>{getPriorityScore(proposal.truck).totalScore}</TableCell>
+                            <TableCell>{getPriorityScore(proposal.truck, getCalculatedDueDate(proposal.truck)).totalScore}</TableCell>
                             <TableCell>{proposal.operator.name}</TableCell>
                             <TableCell>{proposal.operatorAvailableHoursBefore.toFixed(1)} hrs</TableCell>
                             <TableCell>{proposal.operatorAvailableHoursAfter.toFixed(1)} hrs</TableCell>

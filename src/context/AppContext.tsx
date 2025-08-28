@@ -43,8 +43,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [useDeliveryDateForCalculations, setUseDeliveryDateForCalculations] = useState<boolean>(true);
 
   useEffect(() => {
-    generateNewData(200, 24);
-    setMarketInvoiceDeltas(generateMarketInvoiceDeltas());
+    try {
+      console.log('AppProvider: Initial data generation started.');
+      generateNewData(200, 24);
+      setMarketInvoiceDeltas(generateMarketInvoiceDeltas());
+      console.log('AppProvider: Initial data generation completed.');
+    } catch (error) {
+      console.error('AppProvider: Error during initial data generation:', error);
+    }
   }, []);
 
   const getCalculatedDueDate = useCallback((truck: Truck): Date => {
@@ -499,12 +505,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getCalculatedDueDate,
   };
 
+  console.log('AppProvider: Providing context value.');
   return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;
 };
 
 export const useAppContext = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
+    console.error('useAppContext: Context is undefined. This component is likely outside AppProvider.');
     throw new Error('useAppContext must be used within an AppProvider');
   }
   return context;
