@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { Truck, Operator, RepairType, TruckStatus } from '@/types';
-import { getPriorityScore, getAvailableShiftHours, REPAIR_TYPES, CUSTOMER_PRIORITIES, ALL_TRUCK_STATUSES_FOR_GENERATION } from '@/lib/data';
+import { getPriorityScore, getAvailableShiftHours, ALL_REPAIR_TYPES, ALL_CUSTOMER_PRIORITIES, ALL_TRUCK_STATUSES_FOR_GENERATION } from '@/lib/data';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -252,7 +252,7 @@ const CustomerAdaptation: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Priorities</SelectItem>
-              {CUSTOMER_PRIORITIES.map(priority => (
+              {ALL_CUSTOMER_PRIORITIES.map(priority => (
                 <SelectItem key={priority} value={priority}>{priority}</SelectItem>
               ))}
             </SelectContent>

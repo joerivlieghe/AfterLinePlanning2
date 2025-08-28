@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'; // Added useEffect for debugging
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import TruckCard from '@/components/TruckCard';
 import OperatorCard from '@/components/OperatorCard';
@@ -6,21 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { getAvailableShiftHours, getStatusColor } from '@/lib/data';
-import { SearchIcon, UsersIcon, WrenchIcon, CheckCircleIcon, ClockIcon, AlertCircleIcon, PackageXIcon, TruckIcon, UserPlusIcon } from 'lucide-react';
-import { Truck, RepairType, TruckStatus } from '@/types';
+import { getAvailableShiftHours, getStatusColor, getGeneralRepairTypesNeeded, EUROPEAN_MARKETS, ALL_CUSTOMER_PRIORITIES, ALL_REPAIR_TYPES, getPriorityScore } from '@/lib/data';
+import { SearchIcon, UsersIcon, WrenchIcon, CheckCircleIcon, ClockIcon, AlertCircleIcon, PackageXIcon, TruckIcon, UserPlusIcon, FilterIcon, XIcon, ArrowUpIcon, ArrowDownIcon } from 'lucide-react';
+import { Truck, RepairType, TruckStatus, Market } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { REPAIR_TYPES, CUSTOMER_PRIORITIES } from '@/lib/data'; // Import constants
-
-const ALL_TRUCK_STATUSES: TruckStatus[] = [
-  'Pending', 'In Progress', 'Partial', 'Completed', 'Overdue',
-  'Missing Parts Not Available', 'Assigned', 'Ready to Finish',
-  'Overdue - Not Ready', 'Not Ready', 'Overdue - Ready to Plan', 'Ready to Plan'
-];
 
 const Dashboard: React.FC = () => {
-  const { trucks, operators, prioritizedTrucks, allProjectCodes, assignOperatorToTruck, updateTruckStatus } = useAppContext(); // Added assignOperatorToTruck, updateTruckStatus
+  const { trucks, operators, prioritizedTrucks, allProjectCodes, assignOperatorToTruck, updateTruckStatus, getCalculatedDueDate } = useAppContext();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
@@ -31,97 +24,183 @@ const Dashboard: React.FC = () => {
   // Filter states
   const [filterRepairType, setFilterRepairType] = useState<RepairType | 'all'>('all');
   const [filterProjectCode, setFilterProjectCode] = useState<string | 'all'>('all');
-  // Removed filterStatus state as it's redundant with Kanban columns
   const [filterCustomerPriority, setFilterCustomerPriority] = useState<Truck['customerPriority'] | 'all'>('all');
+  const [filterCustomer, setFilterCustomer] = useState<string | 'all'>('all');
+  const [filterMarket, setFilterMarket] = useState<Market | 'all'>('all');
+
+  // Sorting state - Default to chassis number ascending
+  const [sortOption, setSortOption] = useState<'none' | 'priorityScore-desc' | 'priorityScore-asc' | 'deliveryDate-asc' | 'deliveryDate-desc' | 'chassisNumber-asc'>('chassisNumber-asc');
 
   // Memoized filtered trucks based on all filters (excluding status)
   const filteredTrucks = useMemo(() => {
-    // Defensive check: Ensure trucks is an array before filtering
     if (!Array.isArray(trucks)) {
       console.error('`trucks` is not an array in filteredTrucks useMemo:', trucks);
-      return []; // Return an empty array to prevent the filter error
+      return [];
     }
 
-    console.log('Filtering trucks. Total trucks:', trucks.length); // Debug log
-    console.log('Current filters:', { filterRepairType, filterProjectCode, filterCustomerPriority }); // Debug log
+    const lowercasedSearchTerm = searchTerm.toLowerCase();
 
-    const result = trucks.filter(truck => {
-      const matchesRepairType = filterRepairType === 'all' || truck.repairType === filterRepairType;
+    return trucks.filter(truck => {
+      const matchesSearchTerm = truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm);
+      const matchesRepairType = filterRepairType === 'all' || getGeneralRepairTypesNeeded(truck).includes(filterRepairType);
       const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
-      // Removed matchesStatus from here
       const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
-      return matchesRepairType && matchesProjectCode && matchesCustomerPriority;
+      const matchesCustomer = filterCustomer === 'all' || truck.customer === filterCustomer;
+      const matchesMarket = filterMarket === 'all' || truck.market === filterMarket;
+      return matchesSearchTerm && matchesRepairType && matchesProjectCode && matchesCustomerPriority && matchesCustomer && matchesMarket;
     });
-    console.log('Filtered trucks count:', result.length); // Debug log
-    return result;
-  }, [trucks, filterRepairType, filterProjectCode, filterCustomerPriority]);
+  }, [trucks, searchTerm, filterRepairType, filterProjectCode, filterCustomerPriority, filterCustomer, filterMarket]);
 
-  // Kanban Column Filters - now based on filteredTrucks
+  // Dynamic filter options based on currently filtered trucks (excluding the current filter itself)
+  const availableRepairTypes = useMemo(() => {
+    const types = new Set<RepairType>();
+    trucks.filter(truck => {
+      const lowercasedSearchTerm = searchTerm.toLowerCase();
+      const matchesSearchTerm = truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm);
+      const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
+      const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
+      const matchesCustomer = filterCustomer === 'all' || truck.customer === filterCustomer;
+      const matchesMarket = filterMarket === 'all' || truck.market === filterMarket;
+      return matchesSearchTerm && matchesProjectCode && matchesCustomerPriority && matchesCustomer && matchesMarket;
+    }).forEach(truck => getGeneralRepairTypesNeeded(truck).forEach(type => types.add(type)));
+    return Array.from(types).sort();
+  }, [trucks, searchTerm, filterProjectCode, filterCustomerPriority, filterCustomer, filterMarket]);
+
+  const availableProjectCodes = useMemo(() => {
+    const codes = new Set<string>();
+    trucks.filter(truck => {
+      const lowercasedSearchTerm = searchTerm.toLowerCase();
+      const matchesSearchTerm = truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm);
+      const matchesRepairType = filterRepairType === 'all' || getGeneralRepairTypesNeeded(truck).includes(filterRepairType);
+      const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
+      const matchesCustomer = filterCustomer === 'all' || truck.customer === filterCustomer;
+      const matchesMarket = filterMarket === 'all' || truck.market === filterMarket;
+      return matchesSearchTerm && matchesRepairType && matchesCustomerPriority && matchesCustomer && matchesMarket;
+    }).forEach(truck => {
+      if (truck.projectCode) codes.add(truck.projectCode);
+    });
+    return Array.from(codes).sort();
+  }, [trucks, searchTerm, filterRepairType, filterCustomerPriority, filterCustomer, filterMarket]);
+
+  const availableCustomerPriorities = useMemo(() => {
+    const priorities = new Set<Truck['customerPriority']>();
+    trucks.filter(truck => {
+      const lowercasedSearchTerm = searchTerm.toLowerCase();
+      const matchesSearchTerm = truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm);
+      const matchesRepairType = filterRepairType === 'all' || getGeneralRepairTypesNeeded(truck).includes(filterRepairType);
+      const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
+      const matchesCustomer = filterCustomer === 'all' || truck.customer === filterCustomer;
+      const matchesMarket = filterMarket === 'all' || truck.market === filterMarket;
+      return matchesSearchTerm && matchesRepairType && matchesProjectCode && matchesCustomer && matchesMarket;
+    }).forEach(truck => priorities.add(truck.customerPriority));
+    return Array.from(priorities).sort((a, b) => {
+      const order = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
+      return (order[b] || 0) - (order[a] || 0);
+    });
+  }, [trucks, searchTerm, filterRepairType, filterProjectCode, filterCustomer, filterMarket]);
+
+  const availableCustomerDetails = useMemo(() => {
+    const customers = new Set<string>();
+    trucks.filter(truck => {
+      const lowercasedSearchTerm = searchTerm.toLowerCase();
+      const matchesSearchTerm = truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm);
+      const matchesRepairType = filterRepairType === 'all' || getGeneralRepairTypesNeeded(truck).includes(filterRepairType);
+      const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
+      const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
+      const matchesMarket = filterMarket === 'all' || truck.market === filterMarket;
+      return matchesSearchTerm && matchesRepairType && matchesProjectCode && matchesCustomerPriority && matchesMarket;
+    }).forEach(truck => customers.add(truck.customer));
+    return Array.from(customers).sort();
+  }, [trucks, searchTerm, filterRepairType, filterProjectCode, filterCustomerPriority, filterMarket]);
+
+  const availableMarkets = useMemo(() => {
+    const markets = new Set<Market>();
+    trucks.filter(truck => {
+      const lowercasedSearchTerm = searchTerm.toLowerCase();
+      const matchesSearchTerm = truck.chassisNumber.toLowerCase().includes(lowercasedSearchTerm);
+      const matchesRepairType = filterRepairType === 'all' || getGeneralRepairTypesNeeded(truck).includes(filterRepairType);
+      const matchesProjectCode = filterProjectCode === 'all' || (truck.projectCode === filterProjectCode);
+      const matchesCustomerPriority = filterCustomerPriority === 'all' || truck.customerPriority === filterCustomerPriority;
+      const matchesCustomer = filterCustomer === 'all' || truck.customer === filterCustomer;
+      return matchesSearchTerm && matchesRepairType && matchesProjectCode && matchesCustomerPriority && matchesCustomer;
+    }).forEach(truck => markets.add(truck.market));
+    return Array.from(markets).sort();
+  }, [trucks, searchTerm, filterRepairType, filterProjectCode, filterCustomerPriority, filterCustomer]);
+
+  // Helper function for sorting trucks
+  const sortTrucks = useCallback((trucksToSort: Truck[]) => {
+    if (sortOption === 'none') {
+      return trucksToSort;
+    }
+
+    const [sortKey, sortDirection] = sortOption.split('-') as ['priorityScore' | 'deliveryDate' | 'chassisNumber', 'asc' | 'desc'];
+
+    return [...trucksToSort].sort((a, b) => {
+      let comparison = 0;
+      if (sortKey === 'priorityScore') {
+        const scoreA = getPriorityScore(a, getCalculatedDueDate(a)).totalScore; // Pass calculated due date
+        const scoreB = getPriorityScore(b, getCalculatedDueDate(b)).totalScore; // Pass calculated due date
+        comparison = scoreA - scoreB;
+      } else if (sortKey === 'deliveryDate') {
+        const dateA = a.deliveryDate.getTime();
+        const dateB = b.deliveryDate.getTime();
+        comparison = dateA - dateB;
+      } else if (sortKey === 'chassisNumber') {
+        comparison = a.chassisNumber.localeCompare(b.chassisNumber);
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [sortOption, getCalculatedDueDate]);
+
+
+  // Kanban Column Filters - now based on filteredTrucks and global sort
   const overdueMissingPartsTrucks = useMemo(() =>
-    // Defensive check: Ensure filteredTrucks is an array before filtering
-    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
-    .filter(truck => truck.status === 'Overdue - Not Ready')
-    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
-    [filteredTrucks]
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Overdue - Not Ready')),
+    [filteredTrucks, sortTrucks]
   );
 
   const notReadyMissingPartsTrucks = useMemo(() =>
-    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
-    .filter(truck => truck.status === 'Not Ready')
-    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
-    [filteredTrucks]
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Not Ready')),
+    [filteredTrucks, sortTrucks]
   );
 
   const overdueReadyToPlanTrucks = useMemo(() =>
-    // Use filteredTrucks directly for these columns, as prioritizedTrucks is a subset
-    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
-    .filter(truck => truck.status === 'Overdue - Ready to Plan')
-    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
-    [filteredTrucks]
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Overdue - Ready to Plan')),
+    [filteredTrucks, sortTrucks]
   );
 
   const readyToPlanTrucks = useMemo(() =>
-    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
-    .filter(truck => truck.status === 'Ready to Plan')
-    .sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime()),
-    [filteredTrucks]
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Ready to Plan')),
+    [filteredTrucks, sortTrucks]
   );
 
   const assignedTrucks = useMemo(() =>
-    (Array.isArray(filteredTrucks) ? filteredTrucks : [])
-    .filter(truck => truck.status === 'Assigned'),
-    [filteredTrucks]
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : [])
+    .filter(truck => truck.status === 'Assigned')),
+    [filteredTrucks, sortTrucks]
   );
 
-  const partialTrucks = useMemo(() => (Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Partial'), [filteredTrucks]);
-  const readyToFinishTrucks = useMemo(() => (Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Ready to Finish'), [filteredTrucks]);
-  const completedTrucks = useMemo(() => (Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Completed'), [filteredTrucks]);
+  const partialTrucks = useMemo(() =>
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Partial')),
+    [filteredTrucks, sortTrucks]
+  );
 
-  // Debugging the final lists
-  useEffect(() => {
-    console.log('Dashboard Render - Trucks in each column:');
-    console.log('Overdue - Missing Parts:', overdueMissingPartsTrucks.length);
-    console.log('Not Ready - Missing Parts:', notReadyMissingPartsTrucks.length);
-    console.log('Overdue - Ready to Plan:', overdueReadyToPlanTrucks.length);
-    console.log('Ready to Plan:', readyToPlanTrucks.length);
-    console.log('Assigned:', assignedTrucks.length);
-    console.log('Partial:', partialTrucks.length);
-    console.log('Ready to Finish:', readyToFinishTrucks.length);
-    console.log('Completed:', completedTrucks.length);
-  }, [
-    overdueMissingPartsTrucks,
-    notReadyMissingPartsTrucks,
-    overdueReadyToPlanTrucks,
-    readyToPlanTrucks,
-    assignedTrucks,
-    partialTrucks,
-    readyToFinishTrucks,
-    completedTrucks
-  ]);
+  const readyToFinishTrucks = useMemo(() =>
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Ready to Finish')),
+    [filteredTrucks, sortTrucks]
+  );
 
+  const completedTrucks = useMemo(() =>
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Completed')),
+    [filteredTrucks, sortTrucks]
+  );
 
   const filteredOperators = useMemo(() => {
-    // Defensive check: Ensure operators is an array before filtering
     if (!Array.isArray(operators)) {
       console.error('`operators` is not an array in filteredOperators useMemo:', operators);
       return [];
@@ -153,7 +232,6 @@ const Dashboard: React.FC = () => {
         return; // Show warning first, then allow re-click to proceed
       }
 
-      // Use the assignOperatorToTruck from context
       assignOperatorToTruck(selectedTruckId, selectedOperatorId);
 
       setIsAssignDialogOpen(false);
@@ -164,27 +242,26 @@ const Dashboard: React.FC = () => {
   };
 
   const availableOperators = useMemo(() => {
-    if (!selectedTruckId || !Array.isArray(trucks) || !Array.isArray(operators)) return []; // Defensive checks
+    if (!selectedTruckId || !Array.isArray(trucks) || !Array.isArray(operators)) return [];
     const truckToAssign = trucks.find(t => t.id === selectedTruckId);
     if (!truckToAssign) return [];
 
-    // Use getGeneralRepairTypesNeeded for competency matching
     const neededCompetencies = getGeneralRepairTypesNeeded(truckToAssign);
 
     return operators.filter(op =>
       op.status === 'Available' &&
-      neededCompetencies.some(comp => op.competencies.includes(comp)) // Check if operator has *any* needed competency
-    ).sort((a, b) => b.efficiency - a.efficiency); // Prioritize more efficient operators
+      neededCompetencies.some(comp => op.competencies.includes(comp))
+    ).sort((a, b) => b.efficiency - a.efficiency);
   }, [operators, selectedTruckId, trucks]);
 
   const selectedOperatorAvailableHours = useMemo(() => {
-    if (!selectedOperatorId || !Array.isArray(operators)) return 0; // Defensive check
+    if (!selectedOperatorId || !Array.isArray(operators)) return 0;
     const operator = operators.find(op => op.id === selectedOperatorId);
     return operator ? getAvailableShiftHours(operator) : 0;
   }, [selectedOperatorId, operators]);
 
   const selectedTruckRepairTime = useMemo(() => {
-    if (!selectedTruckId || !Array.isArray(trucks)) return 0; // Defensive check
+    if (!selectedTruckId || !Array.isArray(trucks)) return 0;
     const truck = trucks.find(t => t.id === selectedTruckId);
     return truck ? truck.repairTimeEstimate : 0;
   }, [selectedTruckId, trucks]);
@@ -192,6 +269,70 @@ const Dashboard: React.FC = () => {
   const handleOpenWizard = () => {
     navigate('/operators', { state: { openWizard: true } });
   };
+
+  const handleClearFilters = () => {
+    setSearchTerm(''); // Clear search term
+    setFilterRepairType('all');
+    setFilterProjectCode('all');
+    setFilterCustomerPriority('all');
+    setFilterCustomer('all');
+    setFilterMarket('all');
+    setSortOption('chassisNumber-asc'); // Reset to default sort
+  };
+
+  const hasActiveFilters = useMemo(() => {
+    const isActive = (
+      searchTerm !== '' ||
+      filterRepairType !== 'all' ||
+      filterProjectCode !== 'all' ||
+      filterCustomerPriority !== 'all' ||
+      filterCustomer !== 'all' ||
+      filterMarket !== 'all' ||
+      sortOption !== 'chassisNumber-asc'
+    );
+    console.log('hasActiveFilters:', isActive); // Debugging log
+    return isActive;
+  }, [searchTerm, filterRepairType, filterProjectCode, filterCustomerPriority, filterCustomer, filterMarket, sortOption]);
+
+  // Debugging logs for truck columns
+  useEffect(() => {
+    console.log('Partial Trucks Length:', partialTrucks.length);
+    console.log('Ready to Finish Trucks Length:', readyToFinishTrucks.length);
+  }, [partialTrucks, readyToFinishTrucks]);
+
+  // Debugging logs for filter states and available options
+  useEffect(() => {
+    console.log('--- Filter State & Available Options Update ---');
+    console.log('Current Filters:', {
+      searchTerm,
+      filterRepairType,
+      filterProjectCode,
+      filterCustomerPriority,
+      filterCustomer,
+      filterMarket,
+      sortOption
+    });
+    console.log('Available Repair Types:', availableRepairTypes);
+    console.log('Available Project Codes:', availableProjectCodes);
+    console.log('Available Customer Priorities:', availableCustomerPriorities);
+    console.log('Available Customers:', availableCustomerDetails);
+    console.log('Available Markets:', availableMarkets);
+    console.log('---------------------------------------------');
+  }, [
+    searchTerm,
+    filterRepairType,
+    filterProjectCode,
+    filterCustomerPriority,
+    filterCustomer,
+    filterMarket,
+    sortOption,
+    availableRepairTypes,
+    availableProjectCodes,
+    availableCustomerPriorities,
+    availableCustomerDetails,
+    availableMarkets
+  ]);
+
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -202,8 +343,24 @@ const Dashboard: React.FC = () => {
         </Button>
       </div>
 
-      {/* Filters Section */}
-      <div className="bg-white p-6 rounded-lg shadow-md mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Filters and Sorting Section */}
+      <div className="bg-white p-6 rounded-lg shadow-md mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Search Box */}
+        <div className="lg:col-span-2">
+          <label htmlFor="searchChassis" className="block text-sm font-medium text-gray-700 mb-1">Search Chassis Number</label>
+          <div className="relative">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            <Input
+              id="searchChassis"
+              type="text"
+              placeholder="Search by chassis number..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9 pr-3 py-2 border rounded-md w-full"
+            />
+          </div>
+        </div>
+
         <div>
           <label htmlFor="repairTypeFilter" className="block text-sm font-medium text-gray-700 mb-1">Repair Type</label>
           <Select value={filterRepairType} onValueChange={value => setFilterRepairType(value as RepairType | 'all')}>
@@ -212,7 +369,7 @@ const Dashboard: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Repair Types</SelectItem>
-              {REPAIR_TYPES.map(type => (
+              {availableRepairTypes.map(type => (
                 <SelectItem key={type} value={type}>{type}</SelectItem>
               ))}
             </SelectContent>
@@ -226,13 +383,12 @@ const Dashboard: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Project Codes</SelectItem>
-              {allProjectCodes.map(code => (
+              {availableProjectCodes.map(code => (
                 <SelectItem key={code} value={code}>{code}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        {/* Removed Status Filter dropdown */}
         <div>
           <label htmlFor="priorityFilter" className="block text-sm font-medium text-gray-700 mb-1">Customer Priority</label>
           <Select value={filterCustomerPriority} onValueChange={value => setFilterCustomerPriority(value as Truck['customerPriority'] | 'all')}>
@@ -241,12 +397,66 @@ const Dashboard: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Priorities</SelectItem>
-              {CUSTOMER_PRIORITIES.map(priority => (
+              {availableCustomerPriorities.map(priority => (
                 <SelectItem key={priority} value={priority}>{priority}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
+        {/* New Customer Filter */}
+        <div>
+          <label htmlFor="customerFilter" className="block text-sm font-medium text-gray-700 mb-1">Customer</label>
+          <Select value={filterCustomer} onValueChange={value => setFilterCustomer(value)}>
+            <SelectTrigger id="customerFilter">
+              <SelectValue placeholder="All Customers" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Customers</SelectItem>
+              {availableCustomerDetails.map(customer => (
+                <SelectItem key={customer} value={customer}>{customer}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {/* New Market Filter */}
+        <div>
+          <label htmlFor="marketFilter" className="block text-sm font-medium text-gray-700 mb-1">Market</label>
+          <Select value={filterMarket} onValueChange={value => setFilterMarket(value as Market | 'all')}>
+            <SelectTrigger id="marketFilter">
+              <SelectValue placeholder="All Markets" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Markets</SelectItem>
+              {availableMarkets.map(market => (
+                <SelectItem key={market} value={market}>{market}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Single Sorting Control */}
+        <div className="lg:col-span-2">
+          <label htmlFor="sortOption" className="block text-sm font-medium text-gray-700 mb-1">Sort By</label>
+          <Select value={sortOption} onValueChange={value => setSortOption(value as typeof sortOption)}>
+            <SelectTrigger id="sortOption">
+              <SelectValue placeholder="No Sort" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No Sort</SelectItem>
+              <SelectItem value="chassisNumber-asc">Chassis Number - Ascending <ArrowUpIcon className="inline-block ml-2 h-4 w-4" /></SelectItem>
+              <SelectItem value="priorityScore-desc">Priority Score - Highest First <ArrowDownIcon className="inline-block ml-2 h-4 w-4" /></SelectItem>
+              <SelectItem value="priorityScore-asc">Priority Score - Lowest First <ArrowUpIcon className="inline-block ml-2 h-4 w-4" /></SelectItem>
+              <SelectItem value="deliveryDate-asc">Delivery Date - Earliest First <ArrowUpIcon className="inline-block ml-2 h-4 w-4" /></SelectItem>
+              <SelectItem value="deliveryDate-desc">Delivery Date - Latest First <ArrowDownIcon className="inline-block ml-2 h-4 w-4" /></SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {hasActiveFilters && (
+          <div className="lg:col-span-5 flex justify-end mt-4">
+            <Button variant="outline" onClick={handleClearFilters} className="text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700">
+              <XIcon className="mr-2 h-4 w-4" /> Clear All Filters & Sort
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Kanban Board */}
@@ -257,7 +467,7 @@ const Dashboard: React.FC = () => {
             <AlertCircleIcon className="mr-2 h-5 w-5 text-red-600" /> Overdue - Missing Parts ({overdueMissingPartsTrucks.length})
           </h2>
           <p className="text-sm text-muted-foreground mb-4">Priority score is 0 due to pending missing parts.</p>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {overdueMissingPartsTrucks.length > 0 ? (
                 overdueMissingPartsTrucks.map(truck => (
@@ -276,7 +486,7 @@ const Dashboard: React.FC = () => {
             <PackageXIcon className="mr-2 h-5 w-5 text-gray-600" /> Not Ready - Missing Parts ({notReadyMissingPartsTrucks.length})
           </h2>
           <p className="text-sm text-muted-foreground mb-4">Priority score is 0 due to pending missing parts.</p>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {notReadyMissingPartsTrucks.length > 0 ? (
                 notReadyMissingPartsTrucks.map(truck => (
@@ -294,7 +504,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <AlertCircleIcon className="mr-2 h-5 w-5 text-red-700" /> Overdue - Ready ({overdueReadyToPlanTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {overdueReadyToPlanTrucks.length > 0 ? (
                 overdueReadyToPlanTrucks.map(truck => (
@@ -312,7 +522,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <ClockIcon className="mr-2 h-5 w-5 text-blue-600" /> Ready to Plan ({readyToPlanTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {readyToPlanTrucks.length > 0 ? (
                 readyToPlanTrucks.map(truck => (
@@ -330,7 +540,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <UserPlusIcon className="mr-2 h-5 w-5 text-indigo-600" /> Assigned ({assignedTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {assignedTrucks.length > 0 ? (
                 assignedTrucks.map(truck => (
@@ -348,7 +558,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <WrenchIcon className="mr-2 h-5 w-5 text-orange-600" /> Partial ({partialTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {partialTrucks.length > 0 ? (
                 partialTrucks.map(truck => (
@@ -366,7 +576,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <WrenchIcon className="mr-2 h-5 w-5 text-yellow-600" /> Ready to Finish ({readyToFinishTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {readyToFinishTrucks.length > 0 ? (
                 readyToFinishTrucks.map(truck => (
@@ -384,7 +594,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
             <CheckCircleIcon className="mr-2 h-5 w-5 text-green-600" /> Completed ({completedTrucks.length})
           </h2>
-          <ScrollArea className="h-[calc(100vh-400px)] pr-4"> {/* Adjusted height for filters */}
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
             <div className="space-y-4">
               {completedTrucks.length > 0 ? (
                 completedTrucks.map(truck => (

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { getPriorityColor, getStatusColor, formatDate, getPriorityScore } from '@/lib/data';
 import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, ArrowRightIcon, StarIcon, ClockIcon, UsersIcon, PaletteIcon, SettingsIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAppContext } from '@/context/AppContext'; // Import useAppContext
 
 interface TruckCardProps {
   truck: Truck;
@@ -14,7 +15,10 @@ interface TruckCardProps {
 
 const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
   const navigate = useNavigate();
-  const priorityScore = getPriorityScore(truck).totalScore;
+  const { getCalculatedDueDate } = useAppContext(); // Get getCalculatedDueDate from context
+  
+  const calculatedDueDate = getCalculatedDueDate(truck); // Calculate the due date
+  const priorityScore = getPriorityScore(truck, calculatedDueDate).totalScore; // Pass calculatedDueDate
   
   const openDeviations = truck.deviations.filter(dev => !dev.completed).length;
   const pendingMissingParts = truck.missingParts.filter(mp => mp.status !== 'Available' && !mp.completed).length;
@@ -32,7 +36,7 @@ const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
           <CardTitle className="text-lg font-semibold">{truck.chassisNumber}</CardTitle>
           <Badge className={getStatusColor(truck.status)}>{truck.status}</Badge>
         </div>
-        <CardDescription className="text-sm text-gray-600">ID: {truck.id}</CardDescription>
+        <CardDescription className="text-sm text-gray-600">Model: {truck.model}</CardDescription>
       </CardHeader>
       <CardContent className="text-sm space-y-2">
         <div className="flex items-center justify-between">
@@ -41,6 +45,10 @@ const TruckCard: React.FC<TruckCardProps> = ({ truck, onAssignClick }) => {
             <span>Delivery: {formatDate(truck.deliveryDate)}</span>
           </div>
           <Badge className={getPriorityColor(priorityScore)}><StarIcon className="inline-block h-3 w-3 mr-1" /> {priorityScore}</Badge>
+        </div>
+        <div className="flex items-center">
+          <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+          <span>Calculated Due: {formatDate(calculatedDueDate)}</span>
         </div>
         <div className="flex items-center">
           <WrenchIcon className="mr-2 h-4 w-4 text-muted-foreground" />

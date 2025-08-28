@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, getPriorityScore } from '@/lib/data';
+import { getStatusColor, getEfficiencyColor, formatTime, getAvailableShiftHours, getPriorityScore, getGeneralRepairTypesNeeded } from '@/lib/data';
 import { UsersIcon, ClockIcon, GaugeIcon, WrenchIcon, InfoIcon, TruckIcon, SearchIcon, FilterIcon, CalendarDaysIcon, CheckCircleIcon, XCircleIcon } from 'lucide-react';
 import { Operator, Truck, Shift, RepairType, ProposedAssignment } from '@/types';
 import { useToast } from '@/hooks/use-toast';
@@ -97,9 +97,10 @@ const OperatorSelection: React.FC = () => {
     }]));
 
     // Filter for trucks that are ready for assignment AND have no operators currently assigned
+    // Only consider trucks that are 'Ready to Plan' or 'Overdue - Ready to Plan'
     const unassignedPrioritizedTrucks = [...prioritizedTrucks].filter(truck =>
-      truck.assignedOperatorIds.length === 0 && // Only consider trucks with no assigned operators for wizard
-      truck.status !== 'Completed' && truck.status !== 'Ready to Finish' && truck.status !== 'Partial'
+      truck.assignedOperatorIds.length === 0 &&
+      (truck.status === 'Ready to Plan' || truck.status === 'Overdue - Ready to Plan')
     );
 
     const newProposals: ProposedAssignment[] = [];
@@ -108,12 +109,14 @@ const OperatorSelection: React.FC = () => {
 
     for (const truck of unassignedPrioritizedTrucks) {
       const totalTruckWorkTime = truck.repairTimeEstimate; // repairTimeEstimate already includes CA time
+      const truckNeededCompetencies = getGeneralRepairTypesNeeded(truck);
 
       const suitableOperator = Array.from(tempOperators.values())
         .filter(op =>
           op.shift === selectedShiftForWizard &&
           op.status === 'Available' &&
-          (op.competencies.includes(truck.repairType) || (truck.customerAdaptationWork && op.competencies.includes('Customer Adaptation'))) &&
+          // Check if the operator has ALL competencies needed by the truck
+          truckNeededCompetencies.every(neededType => op.competencies.includes(neededType)) &&
           op.simulatedAvailableHours >= totalTruckWorkTime &&
           op.simulatedAssignedTrucksCount < 3 // Max 3 trucks per operator
         )
@@ -162,7 +165,7 @@ const OperatorSelection: React.FC = () => {
     setSelectedShiftForWizard(null);
   };
 
-  const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
+  const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint'];
 
   const totalProposedTrucks = proposedAssignments.filter(p => !p.rejected).length;
   const totalProposedRepairTime = proposedAssignments
@@ -303,7 +306,7 @@ const OperatorSelection: React.FC = () => {
               {wizardStep === 1 && "Select a shift to run the auto-assignment for."}
               {wizardStep === 2 && "Review the proposed assignments. You can reject individual assignments before confirming."}
             </DialogDescription>
-          </DialogHeader> {/* Corrected: Removed duplicate DialogDescription closing tag */}
+          </DialogHeader>
 
           {wizardStep === 1 && (
             <div className="flex flex-col items-center justify-center py-8 space-y-4">

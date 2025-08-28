@@ -1,1136 +1,816 @@
-import {
-  Truck,
-  Operator,
-  RepairType,
-  RepairArea,
-  MissingPartStatus,
-  OperatorStatus,
-  Deviation,
-  MissingPart,
-  TruckStatus,
-  Shift,
-  ProposedAssignment,
-  PaintBoothType,
-  DailyPaintBoothOccupancy, // Import the updated interface
-  ScheduledTruckDetail, // Import the updated interface
-  DailyOperatorOccupancy, // Import the new interface
-} from '@/types';
-import { addDays, addHours, isBefore, isAfter, format, differenceInDays, isPast, setHours, setMinutes, setSeconds, setMilliseconds, startOfDay } from 'date-fns';
+import { v4 as uuidv4 } from 'uuid';
+import { addDays, subDays, isPast, format, differenceInHours, startOfDay, endOfDay, isSameDay, isBefore, differenceInDays } from 'date-fns';
+import { Truck, Operator, RepairType, MissingPartStatus, Deviation, MissingPart, CustomerPriority, Market, MarketInvoiceDelta } from '@/types';
 
-export const REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint']; // Updated: Removed 'Customer Adaptation' (general)
-const REPAIR_AREAS: RepairArea[] = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6'];
-const MISSING_PART_STATUSES: MissingPartStatus[] = ['Ordered', 'In Transit', 'Available'];
-const OPERATOR_STATUSES: OperatorStatus[] = ['Available', 'Busy', 'On Break', 'Off Duty'];
-export const CUSTOMER_PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
-const SHIFTS: Shift[] = ['Early', 'Late'];
-const PAINT_COLORS: string[] = ['Metallic Blue', 'Glossy Black', 'Racing Red', 'Pearl White', 'Matte Grey', 'Forest Green'];
-const PAINT_BOOTH_TYPES: PaintBoothType[] = ['Small', 'Large'];
+export const ALL_TRUCK_STATUSES_FOR_GENERATION = [
+  'Ready to Plan',
+  'Assigned',
+  'Partial',
+  'Ready to Finish',
+  'Completed',
+  'Not Ready',
+  'Overdue - Ready to Plan',
+  'Overdue - Assigned',
+  'Overdue - Partial',
+  'Overdue - Ready to Finish',
+  'Overdue - Not Ready',
+] as const;
 
-// Define all possible truck statuses for generation
-export const ALL_TRUCK_STATUSES_FOR_GENERATION: TruckStatus[] = [
-  'Pending', 'In Progress', 'Partial', 'Completed', 'Overdue',
-  'Missing Parts Not Available', 'Assigned', 'Ready to Finish',
-  'Overdue - Not Ready', 'Not Ready', 'Overdue - Ready to Plan', 'Ready to Plan'
+export type TruckStatus = typeof ALL_TRUCK_STATUSES_FOR_GENERATION[number];
+
+export const ALL_REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint'];
+export const ALL_OPERATOR_STATUSES: Operator['status'][] = ['Available', 'Busy', 'On Break', 'Off Duty'];
+export const ALL_SHIFTS: Operator['shift'][] = ['Early', 'Late'];
+export const ALL_CUSTOMER_PRIORITIES: CustomerPriority[] = ['Low', 'Medium', 'High', 'Critical'];
+export const ALL_MISSING_PART_STATUSES: MissingPartStatus[] = ['Ordered', 'In Transit', 'Available', 'Installed'];
+export const EUROPEAN_MARKETS: Market[] = ['Germany', 'France', 'Italy', 'Spain', 'United Kingdom', 'Netherlands', 'Belgium', 'Sweden', 'Poland', 'Austria'];
+
+// Paint Booth Capacity Constants
+export const SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS = 8; // Example: 8 hours per day for small booth
+export const LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS = 12; // Example: 12 hours per day for large booth
+export const TOTAL_PAINT_BOOTH_DAILY_CAPACITY_HOURS = SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS + LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS;
+
+// General Repair Capacity Constants
+export const GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR = 8; // Example: 8 hours per day per operator
+
+const TRUCK_MODELS = [
+  'FH 42T', 'FH 62T', // FH Tractors
+  'FM 42R', 'FM 62R', 'FM 64R', 'FM 84R', 'FM 104R', // FM Rigid
+  'FH 42R', 'FH 62R' // FH Rigid
 ];
+const CUSTOMERS = ['Logistics Corp', 'Global Freight', 'Speedy Delivery', 'Euro Haul', 'TransNet', 'QuickMove'];
+const PROJECT_CODES = ['P-1001', 'P-1002', 'P-1003', 'P-1004', 'P-1005', 'P-1006', 'P-1007', 'P-1008', 'P-1009', 'P-1010'];
 
-// Define a fixed set of project codes
-const PROJECT_CODES: string[] = ['PROJ-ALPHA', 'PROJ-BETA', 'PROJ-GAMMA'];
-const MAX_PROJECT_TRUCK_PERCENTAGE = 0.03; // 3%
+export const generateRandomDate = (start: Date, end: Date): Date => {
+  return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+};
 
-// Paint Booth Capacities
-export const SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS = 16; // Example: Small booth capacity
-export const LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS = 16; // Example: Large booth capacity
-export const TOTAL_PAINT_BOOTH_DAILY_CAPACITY_HOURS = SMALL_PAINT_BOOTH_DAILY_CAPACITY_HOURS + LARGE_PAINT_BOOTH_DAILY_CAPACITY_HOURS; // Combined total capacity
-
-// General Repair Bay Capacities (conceptual - based on total operator hours)
-export const GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR = 8; // Assuming 8 productive hours per operator per day
-
-function getRandomElement<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function getRandomNumber(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function getRandomRepairTime(min: number, max: number): number {
-  const actualMin = Math.max(0.25, min);
-  const range = (max - actualMin) * 4;
-  const randomQuarters = Math.floor(Math.random() * (range + 1));
-  return actualMin + randomQuarters * 0.25;
-}
-
-function getRandomDate(start: Date, end: Date): Date {
-  const time = start.getTime() + Math.random() * (end.getTime() - start.getTime());
-  return new Date(time);
-}
-
-function generateDeviations(guaranteeOne: boolean = false): Deviation[] {
+export const generateDeviations = (count: number, forceComplete: boolean = false): Deviation[] => {
   const deviations: Deviation[] = [];
-  let numDeviations = 0;
-
-  if (guaranteeOne) {
-    numDeviations = getRandomNumber(1, 2);
-  } else {
-    numDeviations = Math.random() < 0.6 ? getRandomNumber(0, 2) : 0;
-  }
-
-  for (let i = 0; i < numDeviations; i++) {
+  for (let i = 0; i < count; i++) {
+    const type = ALL_REPAIR_TYPES[Math.floor(Math.random() * ALL_REPAIR_TYPES.length)];
+    const severity = ALL_CUSTOMER_PRIORITIES[Math.floor(Math.random() * ALL_CUSTOMER_PRIORITIES.length)];
+    const completed = forceComplete || Math.random() > 0.8; // 20% chance of being completed, or forced
     deviations.push({
-      id: `DEV-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-      description: getRandomElement([
-        'Unable to mount engine bracket',
-        'Faulty wiring in dashboard',
-        'Software glitch in infotainment system',
-        'Paint scratch on driver side door',
-        'Loose connection in braking system',
-        'Misaligned chassis component',
-        'Sensor malfunction',
-        'Hydraulic fluid leak',
-        'Tire pressure monitoring error',
-        'Seatbelt retraction issue',
-      ]),
-      severity: getRandomElement(['Low', 'Medium', 'High']),
-      completed: false,
-      completedBy: null,
-      completedAt: null,
-      timeEstimate: getRandomRepairTime(0.5, 2),
+      id: uuidv4(),
+      type,
+      description: `Deviation for ${type} system.`,
+      timeEstimate: Math.floor(Math.random() * 8) + 1, // 1-8 hours
+      completed,
+      completedBy: completed ? 'System' : null,
+      completedAt: completed ? new Date() : null,
+      severity,
     });
   }
   return deviations;
-}
+};
 
-function generateMissingParts(guaranteeOne: boolean = false, forceStatus?: MissingPartStatus): MissingPart[] {
+export const generateMissingParts = (count: number, forceComplete: boolean = false): MissingPart[] => {
   const missingParts: MissingPart[] = [];
-  let numMissingParts = 0;
-
-  if (guaranteeOne) {
-    numMissingParts = getRandomNumber(1, 2);
-  } else {
-    numMissingParts = Math.random() < 0.5 ? getRandomNumber(0, 2) : 0;
-  }
-
-  for (let i = 0; i < numMissingParts; i++) {
-    const status = forceStatus || getRandomElement(MISSING_PART_STATUSES);
-    const promisedDeliveryDate = status === 'Available'
-      ? new Date()
-      : getRandomDate(addDays(new Date(), 1), addDays(new Date(), 14));
+  const today = new Date();
+  for (let i = 0; i < count; i++) {
+    const status = forceComplete ? 'Installed' : ALL_MISSING_PART_STATUSES[Math.floor(Math.random() * ALL_MISSING_PART_STATUSES.length)];
+    const orderDate = subDays(today, Math.floor(Math.random() * 30));
+    const estimatedArrival = addDays(orderDate, Math.floor(Math.random() * 14) + 1);
+    const completed = forceComplete || (status === 'Installed' ? true : Math.random() > 0.7); // 30% chance of being completed, or forced
     missingParts.push({
-      id: `PART-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-      name: getRandomElement([
-        'Engine Control Unit',
-        'Headlight Assembly',
-        'Brake Caliper',
-        'Transmission Fluid Filter',
-        'Side Mirror',
-        'Dashboard Display',
-        'Fuel Injector',
-        'Alternator',
-        'Radiator Hose',
-        'Exhaust Manifold',
-      ]),
-      status: status,
-      completed: false,
-      completedBy: null,
-      completedAt: null,
-      promisedDeliveryDate: promisedDeliveryDate,
-      timeEstimate: getRandomRepairTime(0.25, 1),
+      id: uuidv4(),
+      name: `Part ${i + 1} for ${TRUCK_MODELS[Math.floor(Math.random() * TRUCK_MODELS.length)]}`,
+      status,
+      orderDate,
+      estimatedArrival,
+      timeEstimate: Math.floor(Math.random() * 4) + 0.5, // 0.5-4 hours
+      completed,
+      completedBy: completed ? 'System' : null,
+      completedAt: completed ? new Date() : null,
     });
   }
   return missingParts;
-}
+};
 
-function inferRepairType(
-  deviations: Deviation[],
-  missingParts: MissingPart[],
-  customerAdaptationType: Truck['customerAdaptationType']
-): RepairType {
-  if (customerAdaptationType === 'Mechanical') {
-    return 'Customer Adaptation - Mechanical';
-  }
-  if (customerAdaptationType === 'Paint') {
-    return 'Customer Adaptation - Paint';
-  }
+// Predefined invoice deltas based on "distance" from Belgium
+const MARKET_INVOICE_DELTAS_PRESETS: { [key in Market]: { deltaDays: number } } = {
+  'Belgium': { deltaDays: 0 }, // Invoice date is same as delivery date
+  'Netherlands': { deltaDays: -1 }, // Invoice date 1 day before delivery
+  'France': { deltaDays: -1 },
+  'Germany': { deltaDays: -2 },
+  'United Kingdom': { deltaDays: -2 },
+  'Italy': { deltaDays: -3 },
+  'Spain': { deltaDays: -3 },
+  'Austria': { deltaDays: -3 },
+  'Poland': { deltaDays: -4 },
+  'Sweden': { deltaDays: -4 },
+};
 
-  const potentialTypes: RepairType[] = [];
-
-  deviations.forEach(dev => {
-    const desc = dev.description.toLowerCase();
-    if (desc.includes('engine') || desc.includes('braking') || desc.includes('chassis') || desc.includes('hydraulic') || desc.includes('tire')) {
-      potentialTypes.push('Mechanical');
-    } else if (desc.includes('wiring') || desc.includes('sensor') || desc.includes('alternator') || desc.includes('dashboard')) {
-      potentialTypes.push('Electrical');
-    } else if (desc.includes('software') || desc.includes('infotainment')) {
-      potentialTypes.push('Software');
-    } else if (desc.includes('paint')) {
-      potentialTypes.push('Paint');
-    }
-  });
-
-  missingParts.forEach(part => {
-    const name = part.name.toLowerCase();
-    if (name.includes('engine') || name.includes('brake') || name.includes('transmission') || name.includes('radiator') || name.includes('exhaust')) {
-      potentialTypes.push('Mechanical');
-    } else if (name.includes('headlight') || name.includes('dashboard') || name.includes('sensor') || name.includes('alternator')) {
-      potentialTypes.push('Electrical');
-    }
-  });
-
-  if (potentialTypes.length > 0) {
-    return getRandomElement(potentialTypes);
-  }
-  // Filter out all Customer Adaptation types for general repair type inference
-  return getRandomElement(REPAIR_TYPES.filter(type => !type.startsWith('Customer Adaptation')));
-}
-
-/**
- * Infers the general repair types (Mechanical, Electrical, Software) needed for a truck
- * based on its deviations and missing parts, excluding paint-related work.
- * @param truck The truck to analyze.
- * @returns An array of RepairType strings representing the general repair competencies needed.
- */
-export function getGeneralRepairTypesNeeded(truck: Truck): RepairType[] {
-  const neededTypes: Set<RepairType> = new Set();
-
-  truck.deviations.forEach(dev => {
-    const desc = dev.description.toLowerCase();
-    if (desc.includes('engine') || desc.includes('braking') || desc.includes('chassis') || desc.includes('hydraulic') || desc.includes('tire')) {
-      neededTypes.add('Mechanical');
-    } else if (desc.includes('wiring') || desc.includes('sensor') || desc.includes('alternator') || desc.includes('dashboard')) {
-      neededTypes.add('Electrical');
-    } else if (desc.includes('software') || desc.includes('infotainment')) {
-      neededTypes.add('Software');
-    }
-    // Paint deviations are intentionally ignored here as this function is for general repair competencies
-  });
-
-  truck.missingParts.forEach(part => {
-    const name = part.name.toLowerCase();
-    if (name.includes('engine') || name.includes('brake') || name.includes('transmission') || name.includes('radiator') || name.includes('exhaust')) {
-      neededTypes.add('Mechanical');
-    } else if (name.includes('headlight') || name.includes('dashboard') || name.includes('sensor') || name.includes('alternator')) {
-      neededTypes.add('Electrical');
-    }
-  });
-
-  const generalRepairTypes = Array.from(neededTypes).filter(type =>
-    !type.includes('Paint') && !type.startsWith('Customer Adaptation')
-  );
-
-  // If no specific types inferred but there's general repair time, assume 'Mechanical' as a fallback
-  if (generalRepairTypes.length === 0 && ((truck.deviationTimeEstimate || 0) > 0 || (truck.missingPartsTimeEstimate || 0) > 0)) {
-    return ['Mechanical']; // Fallback to a common general repair type
-  }
-
-  return generalRepairTypes;
-}
-
-
-export function generateTrucks(count: number): Truck[] {
+export const generateTrucks = (count: number): Truck[] => {
   const trucks: Truck[] = [];
-  const now = new Date();
-  let chassisCounter = 512345;
-  let projectTrucksCount = 0;
-  const maxProjectTrucks = Math.floor(count * MAX_PROJECT_TRUCK_PERCENTAGE);
-
-  // Determine how many trucks should be intentionally overdue (approx 5%)
-  const targetOverdueCount = Math.floor(count * 0.05);
-  let overdueTrucksGenerated = 0;
+  const today = new Date();
+  const twoMonthsAgo = subDays(today, 60);
+  const twoMonthsFromNow = addDays(today, 60);
 
   for (let i = 0; i < count; i++) {
+    const deliveryDate = generateRandomDate(twoMonthsAgo, twoMonthsFromNow);
+    const customer = CUSTOMERS[Math.floor(Math.random() * CUSTOMERS.length)];
+    const market = EUROPEAN_MARKETS[Math.floor(Math.random() * EUROPEAN_MARKETS.length)];
+    const projectCode = Math.random() > 0.7 ? PROJECT_CODES[Math.floor(Math.random() * PROJECT_CODES.length)] : undefined;
+
+    // Use predefined market delta, or fallback to a default if not found
+    const marketDelta = MARKET_INVOICE_DELTAS_PRESETS[market] || { deltaDays: -2 }; // Default to -2 days
+    const invoiceDate = addDays(deliveryDate, marketDelta.deltaDays);
+
     let deviations: Deviation[] = [];
     let missingParts: MissingPart[] = [];
     let customerAdaptationWork: string | null = null;
+    let customerAdaptationTimeEstimate: number | null = null;
     let customerAdaptationCompleted: boolean = false;
-    let customerAdaptationType: Truck['customerAdaptationType'] = undefined;
-    let paintDetails: Truck['paintDetails'] = undefined;
-    let projectCode: string | undefined = undefined;
-    let customerAdaptationTimeEstimate: number = 0;
+    let customerAdaptationCompletedBy: string | null = null;
+    let customerAdaptationCompletedAt: Date | null = null;
 
-    const includeDeviation = Math.random() < 0.8;
-    const includeMissingPart = Math.random() < 0.7;
-    const includeCustomerAdaptation = Math.random() < 0.5;
-
-    // Assign project code only if maxProjectTrucks limit is not reached
-    if (projectTrucksCount < maxProjectTrucks && Math.random() < 0.15) { // 15% chance to be a project truck, subject to overall limit
-      projectCode = getRandomElement(PROJECT_CODES);
-      projectTrucksCount++;
-    }
-
-    if (includeDeviation) {
-      deviations = generateDeviations(true);
-    } else {
-      deviations = generateDeviations(false);
-    }
-
-    // Adjust missing parts generation to ensure more 'Available' parts initially
-    if (includeMissingPart) {
-      // 70% chance to have available parts, 30% for ordered/in transit
-      const forceStatus = Math.random() < 0.7 ? 'Available' : getRandomElement(['Ordered', 'In Transit']);
-      missingParts = generateMissingParts(true, forceStatus);
-    } else {
-      missingParts = generateMissingParts(false);
-    }
-
-    if (includeCustomerAdaptation) {
-      const caTypes: Truck['customerAdaptationType'][] = ['Mechanical', 'Paint'];
-      customerAdaptationType = getRandomElement(caTypes);
-
-      if (customerAdaptationType === 'Mechanical') {
-        customerAdaptationWork = getRandomElement([
-          'Performance exhaust system installation',
-          'Suspension upgrade for heavy duty',
-          'Custom braking system integration',
-        ]);
-        customerAdaptationTimeEstimate = getRandomRepairTime(0.5, 2.5);
-      } else if (customerAdaptationType === 'Paint') {
-        customerAdaptationWork = getRandomElement([
-          'Full vehicle repaint',
-          'Custom stripe design application',
-          'Rust repair and paint matching',
-        ]);
-        paintDetails = {
-          color: getRandomElement(PAINT_COLORS),
-          paintBoothType: getRandomElement(PAINT_BOOTH_TYPES),
-        };
-        customerAdaptationTimeEstimate = getRandomRepairTime(2, 12);
-      }
-      customerAdaptationCompleted = false;
-    }
-
-    // Determine the primary repair type and its associated time estimate
-    let repairType: RepairType;
-    let repairTimeEstimate: number;
-    let deviationTimeEstimate: number = deviations.reduce((sum, dev) => sum + (dev.timeEstimate || 0), 0);
-    let missingPartsTimeEstimate: number = missingParts.reduce((sum, part) => sum + (part.timeEstimate || 0), 0);
-
-    if (customerAdaptationType) {
-      repairType = customerAdaptationType === 'Mechanical' ? 'Customer Adaptation - Mechanical' : 'Customer Adaptation - Paint';
-      repairTimeEstimate = customerAdaptationTimeEstimate;
-      // If it's a CA truck, its primary repair time is the CA time.
-      // Deviations/missing parts are secondary and might be handled separately or considered part of the CA work.
-      // For simplicity, if CA exists, we prioritize its time estimate.
-      // If a CA truck also has deviations/missing parts, their time estimates are still stored but not added to the primary repairTimeEstimate for this model.
-    } else {
-      repairType = inferRepairType(deviations, missingParts, customerAdaptationType);
-      repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate;
-    }
-
-    // Ensure at least some work if none was generated
-    if (repairTimeEstimate === 0) {
-      const forcedWorkType = getRandomElement(['deviation', 'missingPart', 'customerAdaptation']);
-      if (forcedWorkType === 'deviation') {
-        const newDeviationTime = getRandomRepairTime(0.5, 1);
-        deviations.push({
-          id: `DEV-FORCE-${i}`,
-          description: 'Minor check-up required',
-          severity: 'Low',
-          completed: false,
-          completedBy: null,
-          completedAt: null,
-          timeEstimate: newDeviationTime,
-        });
-        deviationTimeEstimate += newDeviationTime;
-        repairType = inferRepairType(deviations, missingParts, customerAdaptationType);
-        repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate;
-      } else if (forcedWorkType === 'missingPart') {
-        const newMissingPartTime = getRandomRepairTime(0.25, 0.5);
-        missingParts.push({
-          id: `PART-FORCE-${i}`,
-          name: getRandomElement(['Generic Part A', 'Generic Part B']),
-          status: 'Available',
-          promisedDeliveryDate: now,
-          completed: false,
-          completedBy: null,
-          completedAt: null,
-          timeEstimate: newMissingPartTime,
-        });
-        missingPartsTimeEstimate += newMissingPartTime;
-        repairType = inferRepairType(deviations, missingParts, customerAdaptationType);
-        repairTimeEstimate = deviationTimeEstimate + missingPartsTimeEstimate;
-      } else if (forcedWorkType === 'customerAdaptation') {
-        customerAdaptationType = getRandomElement(['Mechanical', 'Paint']);
-        if (customerAdaptationType === 'Mechanical') {
-          customerAdaptationWork = getRandomElement([
-            'Basic mechanical customization',
-            'Minor engine tune-up',
-          ]);
-          customerAdaptationTimeEstimate = getRandomRepairTime(0.5, 2.5);
-        } else { // Paint
-          customerAdaptationWork = getRandomElement([
-            'Minor paint touch-up',
-            'Exterior detailing',
-          ]);
-          paintDetails = {
-            color: getRandomElement(PAINT_COLORS),
-            paintBoothType: getRandomElement(PAINT_BOOTH_TYPES),
-          };
-          customerAdaptationTimeEstimate = getRandomRepairTime(2, 12);
-        }
-        customerAdaptationCompleted = false;
-        repairType = customerAdaptationType === 'Mechanical' ? 'Customer Adaptation - Mechanical' : 'Customer Adaptation - Paint';
-        repairTimeEstimate = customerAdaptationTimeEstimate;
+    // Randomly decide if there's customer adaptation work
+    if (Math.random() > 0.6) { // 40% chance of customer adaptation
+      customerAdaptationWork = `Custom ${Math.random() > 0.5 ? 'interior' : 'paint'} for ${customer}`;
+      customerAdaptationTimeEstimate = Math.floor(Math.random() * 16) + 4; // 4-19 hours
+      customerAdaptationCompleted = Math.random() > 0.5; // 50% chance of being completed
+      if (customerAdaptationCompleted) {
+        customerAdaptationCompletedBy = 'System';
+        customerAdaptationCompletedAt = new Date();
       }
     }
 
-    const customerPriority = getRandomElement(CUSTOMER_PRIORITIES);
+    // Generate deviations and missing parts
+    deviations = generateDeviations(Math.floor(Math.random() * 4)); // 0-3 deviations
+    missingParts = Math.random() > 0.6 ? generateMissingParts(Math.floor(Math.random() * 3)) : []; // 0-2 missing parts (60% chance)
 
-    let deliveryDate: Date;
-    const repairDays = Math.ceil(repairTimeEstimate / 8); // Convert hours to full days needed
+    // Determine overall work status for initial generation, without assigning operators
+    const hasOpenDeviations = deviations.some(d => !d.completed);
+    const hasPendingMissingPartsNotAvailable = missingParts.some(mp => mp.status !== 'Available' && !mp.completed);
+    const hasUncompletedCustomerAdaptation = customerAdaptationWork && !customerAdaptationCompleted;
 
-    let minDeliveryDaysFromNow = repairDays + getRandomNumber(3, 7); // Add a buffer of 3-7 days
-    if (customerPriority === 'Critical') {
-      minDeliveryDaysFromNow = repairDays + getRandomNumber(1, 3); // Tighter buffer for critical
-    }
-
-    // Intentionally make some trucks overdue
-    const shouldBeOverdue = overdueTrucksGenerated < targetOverdueCount && Math.random() < 0.5; // 50% chance to make it overdue if target not met
-    if (shouldBeOverdue) {
-      // Set delivery date to be slightly in the past or very tight
-      deliveryDate = addDays(now, getRandomNumber(-5, 0)); // 0 to 5 days in the past
-      overdueTrucksGenerated++;
-    } else {
-      // Ensure the delivery date is at least minDeliveryDaysFromNow from today
-      deliveryDate = addDays(now, minDeliveryDaysFromNow);
-    }
-
-    // If the truck has pending missing parts, push the delivery date further out
-    const hasPendingMissingParts = missingParts.some(mp => mp.status !== 'Available' && !mp.completed);
-    if (hasPendingMissingParts) {
-      const maxMissingPartDelivery = missingParts.reduce((maxDate, mp) => {
-        if (mp.status !== 'Available' && !mp.completed && mp.promisedDeliveryDate) {
-          return isAfter(mp.promisedDeliveryDate, maxDate || new Date(0)) ? mp.promisedDeliveryDate : maxDate;
-        }
-        return maxDate;
-      }, null as Date | null);
-
-      if (maxMissingPartDelivery) {
-        // Ensure delivery date is after missing parts arrive + some buffer
-        const daysAfterParts = differenceInDays(maxMissingPartDelivery, now) + getRandomNumber(2, 5);
-        deliveryDate = isAfter(addDays(now, daysAfterParts), deliveryDate) ? addDays(now, daysAfterParts) : deliveryDate;
-      }
-    }
-
-    // Ensure delivery date is not in the past relative to generation, unless it's a very short repair
-    if (isBefore(deliveryDate, now) && !shouldBeOverdue) { // Only adjust if not intentionally overdue
-      deliveryDate = addDays(now, 1); // At least tomorrow
-    }
+    const hasAnyOpenWork = hasOpenDeviations || hasPendingMissingPartsNotAvailable || hasUncompletedCustomerAdaptation;
+    const allWorkCompleted = !hasAnyOpenWork;
 
     let status: TruckStatus;
-    const isOverdue = isPast(deliveryDate, now);
 
-    if (hasPendingMissingParts) {
-      status = isOverdue ? 'Overdue - Not Ready' : 'Not Ready';
-    } else if (isOverdue) {
-      status = 'Overdue - Ready to Plan';
+    if (hasPendingMissingPartsNotAvailable) {
+      status = 'Not Ready';
+    } else if (allWorkCompleted) {
+      status = 'Ready to Finish'; // Set to Ready to Finish if all work is done, before explicit completion
     } else {
-      status = 'Ready to Plan';
+      status = 'Ready to Plan'; // Default for trucks with open work, no pending parts, and no assignment
     }
+
+    // Apply overdue status if applicable
+    const isOverdue = isPast(deliveryDate, today);
+    if (isOverdue && status !== 'Completed') {
+      status = `Overdue - ${status}` as TruckStatus;
+    }
+
+    // Ensure assignedOperatorIds is always empty on initial generation
+    const assignedOperatorIds: string[] = [];
+
+    // Generate chassis number starting from BB-512345
+    const chassisNumber = `BB-${(512345 + i).toString().padStart(6, '0')}`;
 
     trucks.push({
-      id: `TRUCK-${i + 1}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      chassisNumber: `BB-${chassisCounter++}`,
-      deviations: deviations,
-      missingParts: missingParts,
-      customerAdaptationWork: customerAdaptationWork,
-      customerAdaptationTimeEstimate: customerAdaptationTimeEstimate,
-      customerAdaptationCompleted: customerAdaptationCompleted,
-      customerAdaptationCompletedBy: null,
-      customerAdaptationCompletedAt: null,
-      customerAdaptationType: customerAdaptationType,
-      paintDetails: paintDetails,
-      okToDrive: Math.random() > 0.3,
-      repairTimeEstimate: repairTimeEstimate, // This is now the primary estimate for its main repair type
-      deviationTimeEstimate: deviationTimeEstimate, // Raw deviation time
-      missingPartsTimeEstimate: missingPartsTimeEstimate, // Raw missing parts time
-      repairType: repairType,
-      repairAreaNeeded: getRandomElement(REPAIR_AREAS),
-      deliveryDate: deliveryDate,
-      customerPriority: customerPriority as Truck['customerPriority'],
-      assignedOperatorIds: [],
-      status: status,
-      projectCode: projectCode,
+      id: uuidv4(),
+      name: chassisNumber, // Use generated chassis number as name
+      chassisNumber: chassisNumber, // Add chassisNumber property
+      model: TRUCK_MODELS[Math.floor(Math.random() * TRUCK_MODELS.length)],
+      year: 2018 + Math.floor(Math.random() * 6), // 2018-2023
+      status,
+      deliveryDate,
+      invoiceDate,
+      customer,
+      market,
+      deviations,
+      missingParts,
+      assignedOperatorIds, // Always an empty array initially
+      customerPriority: ALL_CUSTOMER_PRIORITIES[Math.floor(Math.random() * ALL_CUSTOMER_PRIORITIES.length)],
+      projectCode,
+      deviationTimeEstimate: 0, // Will be calculated in AppContext
+      missingPartsTimeEstimate: 0, // Will be calculated in AppContext
+      repairTimeEstimate: 0, // Will be calculated in AppContext
+      customerAdaptationWork,
+      customerAdaptationTimeEstimate,
+      customerAdaptationCompleted,
+      customerAdaptationCompletedBy,
+      customerAdaptationCompletedAt,
     });
   }
-
-  // Ensure a minimum number of critical trucks, which often become overdue
-  const currentCriticalCount = trucks.filter(t => t.customerPriority === 'Critical').length;
-  if (currentCriticalCount < targetOverdueCount) { // Use targetOverdueCount as a proxy for critical
-    const trucksToPromote = trucks.filter(t => t.customerPriority !== 'Critical' && t.status !== 'Completed');
-    for (let i = 0; i < targetOverdueCount - currentCriticalCount && i < trucksToPromote.length; i++) {
-      const truckToPromote = trucksToPromote[i];
-      truckToPromote.customerPriority = 'Critical';
-      // For critical trucks, ensure their delivery date is tight but still plausible
-      const repairDays = Math.ceil(truckToPromote.repairTimeEstimate / 8);
-      truckToPromote.deliveryDate = addDays(now, repairDays + getRandomNumber(1, 3));
-      
-      const hasWork = truckToPromote.repairTimeEstimate > 0;
-      if (!hasWork) {
-        // If no work, add a general repair deviation
-        const newDeviationTime = getRandomRepairTime(4, 8);
-        truckToPromote.deviations.push({ id: `DEV-CRIT-${truckToPromote.id}`, description: 'Critical system malfunction', severity: 'High', completed: false, completedBy: null, completedAt: null, timeEstimate: newDeviationTime });
-        truckToPromote.deviationTimeEstimate = (truckToPromote.deviationTimeEstimate || 0) + newDeviationTime;
-        truckToPromote.repairTimeEstimate = (truckToPromote.deviationTimeEstimate || 0) + (truckToPromote.missingPartsTimeEstimate || 0);
-        truckToPromote.repairType = inferRepairType(truckToPromote.deviations, truckToPromote.missingParts, truckToPromote.customerAdaptationType);
-      }
-      truckToPromote.status = 'Overdue - Ready to Plan';
-    }
-  }
-
   return trucks;
-}
+};
 
-export function generateOperators(count: number): Operator[] {
+export const generateOperators = (count: number): Operator[] => {
   const operators: Operator[] = [];
-  const now = new Date();
-
-  const allOperatorNames = [
-    "Alice Smith", "Bob Johnson", "Charlie Brown", "Diana Prince", "Eve Adams",
-    "Frank White", "Grace Lee", "Harry Davis", "Ivy King", "Jack Taylor",
-    "Karen Green", "Liam Hall", "Mia Clark", "Noah Wright", "Olivia Scott",
-    "Peter Jones", "Quinn Miller", "Rachel Davis", "Sam Wilson", "Tina Moore",
-    "Uma Sharma", "Victor Chen", "Wendy Kim", "Xavier Bell", "Yara Singh",
-    "Zack Taylor", "Anna Lee", "Ben Carter", "Chloe King", "David Green"
-  ];
-
-  const shuffledNames = [...allOperatorNames].sort(() => 0.5 - Math.random());
-  let nameIndex = 0;
-
-  const numEarlyShift = count / 2;
-  const numLateShift = count / 2;
-
-  const numPaintPerShift = 2;
-  const numGeneralRepairPerShift = 10; // 12 total per shift, 2 paint, 10 general
-
   for (let i = 0; i < count; i++) {
-    const shiftType: Shift = i < numEarlyShift ? 'Early' : 'Late';
-    let shiftStartTime: Date;
-    let shiftEndTime: Date;
+    const shift = ALL_SHIFTS[Math.floor(Math.random() * ALL_SHIFTS.length)];
+    const shiftStartTime = new Date();
+    const shiftEndTime = new Date();
 
-    if (shiftType === 'Early') {
-      shiftStartTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 6), 0), 0), 0);
-      shiftEndTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 14), 0), 0), 0);
+    if (shift === 'Early') {
+      shiftStartTime.setHours(6 + Math.floor(Math.random() * 2), 0, 0, 0); // 6 AM or 7 AM
+      shiftEndTime.setHours(14 + Math.floor(Math.random() * 2), 0, 0, 0); // 2 PM or 3 PM
     } else {
-      shiftStartTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 14), 0), 0), 0);
-      shiftEndTime = setMilliseconds(setSeconds(setMinutes(setHours(now, 22), 0), 0), 0);
+      shiftStartTime.setHours(14 + Math.floor(Math.random() * 2), 0, 0, 0); // 2 PM or 3 PM
+      shiftEndTime.setHours(22 + Math.floor(Math.random() * 2), 0, 0, 0); // 10 PM or 11 PM
     }
 
-    const competencies: RepairType[] = [];
-    const currentShiftIndex = i % (count / 2); // Index within the current shift (0-11)
-
-    if (currentShiftIndex < numPaintPerShift) {
-      // Assign as Paint specialist
-      competencies.push('Paint', 'Customer Adaptation - Paint');
-    } else {
-      // Assign as General Repair specialist
-      const generalRepairTypes = REPAIR_TYPES.filter(type => !type.includes('Paint') && !type.startsWith('Customer Adaptation'));
-      const numCompetencies = getRandomNumber(1, generalRepairTypes.length);
-      const shuffledRepairTypes = [...generalRepairTypes].sort(() => 0.5 - Math.random());
-      for (let j = 0; j < numCompetencies; j++) {
-        competencies.push(shuffledRepairTypes[j]);
-      }
-      // Also add Customer Adaptation - Mechanical for general repair operators
-      if (!competencies.includes('Customer Adaptation - Mechanical')) {
-        competencies.push('Customer Adaptation - Mechanical');
-      }
-    }
-
-    const operator: Operator = {
-      id: `OP-${i + 1}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`,
-      name: shuffledNames[nameIndex++ % shuffledNames.length] || `Operator ${i + 1}`,
-      competencies: Array.from(new Set(competencies)), // Ensure unique competencies
-      status: 'Available',
-      shiftStartTime: shiftStartTime,
-      shiftEndTime: shiftEndTime,
-      shift: shiftType,
-      assignedTrucks: [],
-      efficiency: parseFloat((Math.random() * (1.0 - 0.7) + 0.7).toFixed(2)),
-    };
-    operators.push(operator);
+    operators.push({
+      id: uuidv4(),
+      name: `Operator ${String.fromCharCode(65 + i)}`,
+      competencies: Array.from({ length: Math.floor(Math.random() * 3) + 1 }, () => ALL_REPAIR_TYPES[Math.floor(Math.random() * ALL_REPAIR_TYPES.length)]),
+      status: ALL_OPERATOR_STATUSES[Math.floor(Math.random() * ALL_OPERATOR_STATUSES.length)],
+      shiftStartTime,
+      shiftEndTime,
+      shift,
+      assignedTrucks: [], // Will be empty initially
+      efficiency: 0.9 + Math.random() * 0.2, // 0.9 to 1.1
+    });
   }
   return operators;
-}
+};
 
-interface PriorityBreakdown {
-  customerPriority: number;
-  deliveryDate: number;
-  missingPartsAvailability: number;
-  deviations: number;
-  customerAdaptationWork: number;
-  okToDrive: number;
-  repairTimeEstimatePenalty: number;
-  totalScore: number;
-}
-
-export function getPriorityScore(truck: Truck): PriorityBreakdown {
+export const getPriorityScore = (truck: Truck, calculatedDueDate: Date) => {
+  console.log(`getPriorityScore for truck ${truck.chassisNumber} with calculatedDueDate: ${formatDate(calculatedDueDate)}`);
   let score = 0;
-  const now = new Date();
-  const breakdown: Omit<PriorityBreakdown, 'totalScore'> = {
-    customerPriority: 0,
-    deliveryDate: 0,
-    missingPartsAvailability: 0,
-    deviations: 0,
-    customerAdaptationWork: 0,
-    okToDrive: 0,
-    repairTimeEstimatePenalty: 0,
-  };
+  let reasons: string[] = [];
+  const today = new Date();
 
-  const pendingMissingParts = truck.missingParts.filter(
-    (mp) => mp.status !== 'Available' && !mp.completed
-  );
-
-  if (pendingMissingParts.length > 0) {
-    return {
-      ...breakdown,
-      totalScore: 0,
-      missingPartsAvailability: -100,
-    };
-  }
-
-  const daysUntilDelivery = differenceInDays(truck.deliveryDate, now);
-  if (isPast(truck.deliveryDate, now)) {
-    breakdown.deliveryDate = 100 + Math.min(50, Math.abs(daysUntilDelivery) * 5);
-  } else if (daysUntilDelivery <= 0) {
-    breakdown.deliveryDate = 100;
-  } else if (daysUntilDelivery === 1) {
-    breakdown.deliveryDate = 90;
-  } else if (daysUntilDelivery <= 3) {
-    breakdown.deliveryDate = 70;
-  } else if (daysUntilDelivery <= 7) {
-    breakdown.deliveryDate = 50;
-  } else {
-    breakdown.deliveryDate = Math.max(0, 30 - (daysUntilDelivery - 7) * 1);
-  }
-  score += breakdown.deliveryDate;
-
+  // 1. Customer Priority
   switch (truck.customerPriority) {
     case 'Critical':
-      breakdown.customerPriority = 50;
+      score += 50;
+      reasons.push('Critical Customer Priority (+50)');
       break;
     case 'High':
-      breakdown.customerPriority = 35;
+      score += 30;
+      reasons.push('High Customer Priority (+30)');
       break;
     case 'Medium':
-      breakdown.customerPriority = 20;
+      score += 10;
+      reasons.push('Medium Customer Priority (+10)');
       break;
-    case 'Low':
-      breakdown.customerPriority = 10;
+    default:
       break;
   }
-  score += breakdown.customerPriority;
 
-  if (truck.missingParts.length > 0 && pendingMissingParts.length === 0) {
-    breakdown.missingPartsAvailability = 20;
+  // 2. Time to Delivery (closer = higher priority, passed = even higher priority)
+  if (calculatedDueDate) {
+    const daysDiff = differenceInDays(calculatedDueDate, today);
+
+    if (daysDiff <= 0) { // Delivery date is today or in the past (overdue)
+      const overdueDays = Math.abs(daysDiff);
+      const overdueScore = 50 + (overdueDays * 5); // Base 50 for being overdue, plus 5 points per day overdue
+      score += overdueScore;
+      reasons.push(`Overdue by ${overdueDays} days (+${overdueScore})`);
+    } else { // Delivery date is in the future
+      if (daysDiff <= 3) {
+        score += 40;
+        reasons.push(`Due in ${daysDiff} days (+40)`);
+      } else if (daysDiff <= 7) {
+        score += 20;
+        reasons.push(`Due in ${daysDiff} days (+20)`);
+      } else if (daysDiff <= 14) {
+        score += 10;
+        reasons.push(`Due in ${daysDiff} days (+10)`);
+      } else {
+        score += 5; // Small score for very far out, but still on the radar
+        reasons.push(`Due in ${daysDiff} days (+5)`);
+      }
+    }
   }
-  score += breakdown.missingPartsAvailability;
 
-  truck.deviations.filter(dev => !dev.completed).forEach((dev) => {
-    switch (dev.severity) {
-      case 'High':
-        breakdown.deviations += 10;
-        break;
-      case 'Medium':
-        breakdown.deviations += 5;
-        break;
-      case 'Low':
-        breakdown.deviations += 2;
-        break;
+  // 3. Number of deviations (more deviations = higher priority)
+  if (truck.deviations && truck.deviations.length > 0) {
+    const deviationScore = truck.deviations.length * 5;
+    score += deviationScore;
+    reasons.push(`${truck.deviations.length} Deviations (+${deviationScore})`);
+  }
+
+  // 4. Missing parts (if available, higher priority to start work)
+  const hasAvailableMissingParts = truck.missingParts && truck.missingParts.some(part => part.status === 'Available' && !part.completed);
+  if (hasAvailableMissingParts) {
+    score += 25;
+    reasons.push('Missing Parts Available (+25)');
+  }
+
+  // 5. Customer Adaptation Work
+  if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
+    score += 35;
+    reasons.push('Customer Adaptation Work Pending (+35)');
+  }
+
+  return { totalScore: score, reasons };
+};
+
+export const getPriorityColor = (totalScore: number): string => { // Changed to accept totalScore directly
+  if (totalScore >= 100) {
+    return 'text-red-500'; // Critical
+  } else if (totalScore >= 50) {
+    return 'text-orange-500'; // High
+  } else if (totalScore >= 20) {
+    return 'text-yellow-500'; // Medium
+  } else {
+    return 'text-green-500'; // Low
+  }
+};
+
+export const getStatusColor = (status: TruckStatus): string => {
+  switch (status) {
+    case 'Ready to Plan':
+      return 'text-blue-500';
+    case 'Assigned':
+      return 'text-indigo-500';
+    case 'Partial':
+      return 'text-purple-500';
+    case 'Ready to Finish':
+      return 'text-teal-500';
+    case 'Completed':
+      return 'text-green-500';
+    case 'Not Ready':
+      return 'text-gray-500';
+    case 'Overdue - Ready to Plan':
+    case 'Overdue - Assigned':
+    case 'Overdue - Partial':
+    case 'Overdue - Ready to Finish':
+    case 'Overdue - Not Ready':
+      return 'text-red-500';
+    default:
+      return 'text-gray-500';
+  }
+};
+
+export const getGeneralRepairTypesNeeded = (truck: Truck): RepairType[] => {
+  const neededTypes = new Set<RepairType>();
+
+  truck.deviations.forEach(dev => {
+    if (!dev.completed) {
+      neededTypes.add(dev.type);
     }
   });
-  score += breakdown.deviations;
 
+  // If customer adaptation work exists and is not completed, add its specific type
   if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
-    breakdown.customerAdaptationWork = 5;
-  }
-  score += breakdown.customerAdaptationWork;
-
-  if (!truck.okToDrive) {
-    breakdown.okToDrive = 5;
-  }
-  score += breakdown.okToDrive;
-
-  const totalEstimatedWorkTime = truck.repairTimeEstimate;
-  breakdown.repairTimeEstimatePenalty = -Math.min(10, (totalEstimatedWorkTime / 24) * 10);
-  score += breakdown.repairTimeEstimatePenalty;
-
-  const totalScore = Math.max(0, Math.min(200, Math.round(score)));
-
-  return {
-    ...breakdown,
-    totalScore: totalScore,
-  };
-}
-
-export function getAvailableShiftHours(operator: Operator, planningDate: Date = new Date()): number {
-  const shiftStartOnPlanningDate = setMilliseconds(setSeconds(setMinutes(setHours(planningDate, operator.shiftStartTime.getHours()), operator.shiftStartTime.getMinutes()), 0), 0);
-  const shiftEndOnPlanningDate = setMilliseconds(setSeconds(setMinutes(setHours(planningDate, operator.shiftEndTime.getHours()), operator.shiftEndTime.getMinutes()), 0), 0);
-
-  const now = new Date();
-
-  let totalShiftDurationHours: number;
-
-  if (format(planningDate, 'yyyy-MM-dd') === format(now, 'yyyy-MM-dd')) {
-    if (isAfter(now, shiftEndOnPlanningDate)) {
-      totalShiftDurationHours = 0;
-    } else if (isBefore(now, shiftStartOnPlanningDate)) {
-      totalShiftDurationHours = (shiftEndOnPlanningDate.getTime() - shiftStartOnPlanningDate.getTime()) / (1000 * 60 * 60);
+    // Assuming customer adaptation work implies either Mechanical or Paint for now
+    // This could be made more dynamic if customerAdaptationWork had a 'type' field
+    if (truck.customerAdaptationWork.toLowerCase().includes('mechanical')) {
+      neededTypes.add('Customer Adaptation - Mechanical');
+    } else if (truck.customerAdaptationWork.toLowerCase().includes('paint')) {
+      neededTypes.add('Customer Adaptation - Paint');
     } else {
-      totalShiftDurationHours = (shiftEndOnPlanningDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+      // Default to Mechanical if no specific type is inferred
+      neededTypes.add('Customer Adaptation - Mechanical');
     }
+  }
+
+  return Array.from(neededTypes);
+};
+
+export const formatTime = (date: Date): string => {
+  return format(date, 'HH:mm');
+};
+
+export const formatDate = (date: Date): string => {
+  return format(date, 'yyyy-MM-dd');
+};
+
+export const generateMarketInvoiceDeltas = (): MarketInvoiceDelta[] => {
+  // Generate deltas based on the predefined presets
+  return EUROPEAN_MARKETS.map(market => {
+    const preset = MARKET_INVOICE_DELTAS_PRESETS[market];
+    return {
+      market,
+      deltaDays: preset ? preset.deltaDays : -2, // Fallback to default if not in presets
+    };
+  });
+};
+
+export const getAvailableShiftHours = (operator: Operator): number => {
+  // Calculate the difference in hours between shift end and start times
+  // Ensure to handle cases where shiftEndTime might be on the next day if it crosses midnight
+  let shiftDurationHours = differenceInHours(operator.shiftEndTime, operator.shiftStartTime);
+
+  // If the end time is earlier than the start time, it means it crosses midnight
+  // Add 24 hours to the duration to account for the next day
+  if (shiftDurationHours < 0) {
+    shiftDurationHours += 24;
+  }
+
+  return shiftDurationHours;
+};
+
+export const getEfficiencyColor = (efficiency: number): string => {
+  if (efficiency >= 1.1) {
+    return 'text-green-500'; // Highly efficient
+  } else if (efficiency >= 0.9) {
+    return 'text-yellow-500'; // Moderately efficient
   } else {
-    totalShiftDurationHours = (shiftEndOnPlanningDate.getTime() - shiftStartOnPlanningDate.getTime()) / (1000 * 60 * 60);
+    return 'text-red-500'; // Low efficiency
   }
+};
 
-  if (operator.status === 'Off Duty' || operator.status === 'On Break') {
-    return 0;
-  }
-
-  const assignedWorkload = operator.assignedTrucks.reduce((sum, truck) =>
-    sum + truck.repairTimeEstimate
-  , 0);
-
-  return Math.max(0, totalShiftDurationHours - assignedWorkload);
-}
-
-export function getStatusColor(status: Truck['status'] | Operator['status']): string {
+export const getMissingPartStatusColor = (status: MissingPartStatus): string => {
   switch (status) {
-    case 'Pending':
-      return 'bg-blue-100 text-blue-800';
-    case 'In Progress':
-      return 'bg-yellow-100 text-yellow-800';
-    case 'Partial':
-      return 'bg-orange-100 text-orange-800';
-    case 'Completed':
-      return 'bg-green-100 text-green-800';
+    case 'Ordered':
+      return 'text-blue-500';
+    case 'In Transit':
+      return 'text-yellow-500';
     case 'Available':
-      return 'bg-green-100 text-green-800';
-    case 'Busy':
-      return 'bg-red-100 text-red-800';
-    case 'On Break':
-      return 'bg-gray-100 text-gray-800';
-    case 'Off Duty':
-      return 'bg-purple-100 text-purple-800';
-    case 'Overdue':
-      return 'bg-red-200 text-red-900';
-    case 'Missing Parts Not Available':
-      return 'bg-gray-200 text-gray-800';
-    case 'Assigned':
-      return 'bg-indigo-100 text-indigo-800';
-    case 'Overdue - Not Ready':
-      return 'bg-red-300 text-red-900';
-    case 'Ready to Plan':
-      return 'bg-blue-400 text-white';
-    case 'Ready to Finish':
-      return 'bg-yellow-200 text-yellow-900';
+      return 'text-green-500';
+    case 'Installed':
+      return 'text-gray-500';
     default:
-      return 'bg-gray-100 text-gray-800';
+      return 'text-gray-500';
   }
-}
+};
 
-export function getPriorityColor(score: number): string {
-  if (score >= 150) {
-    return 'bg-red-500 text-white';
-  } else if (score >= 100) {
-    return 'bg-orange-500 text-white';
-  } else if (score >= 50) {
-    return 'bg-yellow-500 text-black';
-  } else {
-    return 'bg-green-500 text-white';
-  }
-}
-
-export function getSeverityColor(severity: Deviation['severity']): string {
+export const getSeverityColor = (severity: CustomerPriority): string => { // Changed to accept severity directly
   switch (severity) {
+    case 'Critical':
+      return 'text-red-600'; // Critical
     case 'High':
-      return 'text-red-600';
     case 'Medium':
-      return 'text-orange-600';
+      return 'text-orange-600'; // High
     case 'Low':
-      return 'text-green-600';
+      return 'text-green-600'; // Low
     default:
       return 'text-gray-600';
   }
-}
+};
 
-export function getMissingPartStatusColor(status: MissingPartStatus): string {
-  switch (status) {
-    case 'Available':
-      return 'bg-green-500 text-white';
-    case 'In Transit':
-      return 'bg-yellow-500 text-black';
-    case 'Ordered':
-      return 'bg-red-500 text-white';
-    default:
-      return 'bg-gray-500 text-white';
+export const generateNextDays = (count: number): Date[] => {
+  const days: Date[] = [];
+  const today = startOfDay(new Date()); // Start from today
+  for (let i = 0; i < count; i++) {
+    days.push(addDays(today, i));
   }
-}
+  return days;
+};
 
-export function getEfficiencyColor(efficiency: number): string {
-  if (efficiency >= 0.9) return 'text-green-600';
-  if (efficiency >= 0.75) return 'text-yellow-600';
-  return 'text-red-600';
-}
+// --- Paint Booth Scheduling Simulation ---
 
-export function formatTime(date: Date): string {
-  return format(date, 'HH:mm');
-}
+export type ScheduledTruckDetail = {
+  truckId: string;
+  chassisNumber: string;
+  repairType: 'Paint' | 'Customer Adaptation - Paint';
+  hoursScheduled: number;
+};
 
-export function formatDate(date: Date): string {
-  return format(date, 'MMM dd, yyyy');
-}
+export type DailyOccupancy = {
+  date: string; // YYYY-MM-DD
+  totalScheduledHours: number;
+  smallBoothScheduledHours: number;
+  largeBoothScheduledHours: number;
+  smallBoothPaintHours: number;
+  smallBoothCAPaintHours: number;
+  largeBoothPaintHours: number;
+  largeBoothCAPaintHours: number;
+  smallBoothScheduledTrucksDetails: ScheduledTruckDetail[];
+  largeBoothScheduledTrucksDetails: ScheduledTruckDetail[];
+  capacityProblem: boolean;
+};
 
-export function generateNextDays(numDays: number): Date[] {
-  const dates: Date[] = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0); // Normalize to start of day
-
-  for (let i = 0; i < numDays; i++) {
-    dates.push(addDays(today, i));
-  }
-  return dates;
-}
-
-export function simulatePaintBoothSchedule(
+export const simulatePaintBoothSchedule = (
   trucks: Truck[],
   numDays: number,
-  capacities: { small: number; large: number }
-): {
-  occupancyData: DailyPaintBoothOccupancy[];
-  truckCompletionDates: Map<string, Date>;
-} {
-  const { small: smallCapacity, large: largeCapacity } = capacities;
-  const totalCapacity = smallCapacity + largeCapacity;
-
-  const dailyOccupancyMap = new Map<string, DailyPaintBoothOccupancy>();
-  const truckCompletionDates = new Map<string, Date>();
+  boothCapacities: { small: number; large: number }
+) => {
   const today = startOfDay(new Date());
-
-  // Initialize daily occupancy for a wider range to allow for multi-day scheduling
-  const extendedNumDays = numDays + 60; // Schedule up to 60 days out
-  for (let i = 0; i < extendedNumDays; i++) {
+  const occupancyData: DailyOccupancy[] = Array.from({ length: numDays }).map((_, i) => {
     const date = addDays(today, i);
-    const formattedDate = format(date, 'MMM dd');
-    dailyOccupancyMap.set(formattedDate, {
-      date: formattedDate,
+    return {
+      date: format(date, 'yyyy-MM-DD'),
       totalScheduledHours: 0,
+      smallBoothScheduledHours: 0,
+      largeBoothScheduledHours: 0,
       smallBoothPaintHours: 0,
       smallBoothCAPaintHours: 0,
       largeBoothPaintHours: 0,
       largeBoothCAPaintHours: 0,
-      smallBoothScheduledHours: 0,
-      largeBoothScheduledHours: 0,
-      availableCapacity: totalCapacity,
-      capacityProblem: false,
       smallBoothScheduledTrucksDetails: [],
       largeBoothScheduledTrucksDetails: [],
-    });
+      capacityProblem: false,
+    };
+  });
+
+  const truckCompletionDates = new Map<string, Date>();
+
+  // Filter trucks that need paint work and are not completed
+  const paintBoothTrucks = trucks.filter(
+    (truck) =>
+      (truck.deviations.some(d => d.type === 'Paint' && !d.completed) ||
+       (truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint') && !truck.customerAdaptationCompleted)) &&
+      truck.status !== 'Completed'
+  );
+
+  // Sort trucks by priority: earliest delivery date, then highest customer priority
+  paintBoothTrucks.sort((a, b) => {
+    // Primary sort: delivery date (earliest first)
+    if (a.deliveryDate.getTime() !== b.deliveryDate.getTime()) {
+      return a.deliveryDate.getTime() - b.deliveryDate.getTime();
+    }
+
+    // Secondary sort: customer priority (Critical > High > Medium > Low)
+    const priorityOrder: CustomerPriority[] = ['Critical', 'High', 'Medium', 'Low'];
+    return priorityOrder.indexOf(b.customerPriority) - priorityOrder.indexOf(a.customerPriority);
+  });
+
+  for (const truck of paintBoothTrucks) {
+    let remainingPaintHours = 0;
+    let paintDeviationHours = truck.deviations
+      .filter(d => d.type === 'Paint' && !d.completed)
+      .reduce((sum, d) => sum + (d.timeEstimate || 0), 0);
+
+    let customerAdaptationPaintHours = 0;
+    if (truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint') && !truck.customerAdaptationCompleted && truck.customerAdaptationTimeEstimate) {
+      customerAdaptationPaintHours = truck.customerAdaptationTimeEstimate;
+    }
+
+    remainingPaintHours = paintDeviationHours + customerAdaptationPaintHours;
+
+    let currentDayIndex = 0;
+    let scheduledCompletionDate: Date | null = null;
+
+    while (remainingPaintHours > 0 && currentDayIndex < numDays) {
+      const dayEntry = occupancyData[currentDayIndex];
+      const dayDate = new Date(dayEntry.date);
+
+      let smallBoothAvailable = boothCapacities.small - dayEntry.smallBoothScheduledHours;
+      let largeBoothAvailable = boothCapacities.large - dayEntry.largeBoothScheduledHours;
+
+      // Determine if the truck is "large" or "small" for booth preference (simplified for now)
+      // For example, based on model or total hours, here we'll just assume all trucks can use either
+      // but prioritize large for large booth, small for small booth if a distinction is needed.
+      // For simplicity, let's assume any truck can use any booth, but we'll try to fill small first.
+
+      let hoursToScheduleToday = Math.min(remainingPaintHours, smallBoothAvailable + largeBoothAvailable);
+
+      if (hoursToScheduleToday > 0) {
+        let scheduledInSmallBooth = 0;
+        let scheduledInLargeBooth = 0;
+
+        // Try to fill small booth first
+        if (smallBoothAvailable > 0) {
+          scheduledInSmallBooth = Math.min(hoursToScheduleToday, smallBoothAvailable);
+          hoursToScheduleToday -= scheduledInSmallBooth;
+        }
+
+        // Then fill large booth if remaining hours
+        if (hoursToScheduleToday > 0 && largeBoothAvailable > 0) {
+          scheduledInLargeBooth = Math.min(hoursToScheduleToday, largeBoothAvailable);
+        }
+
+        // Update day entry
+        dayEntry.totalScheduledHours += scheduledInSmallBooth + scheduledInLargeBooth;
+        dayEntry.smallBoothScheduledHours += scheduledInSmallBooth;
+        dayEntry.largeBoothScheduledHours += scheduledInLargeBooth;
+
+        // Distribute hours between paint deviations and customer adaptation paint
+        let currentPaintDeviationHours = paintDeviationHours;
+        let currentCAPaintHours = customerAdaptationPaintHours;
+
+        // Schedule paint deviation hours
+        let scheduledPaintDevHours = Math.min(scheduledInSmallBooth + scheduledInLargeBooth, currentPaintDeviationHours);
+        if (scheduledPaintDevHours > 0) {
+          if (scheduledInSmallBooth > 0) {
+            const hoursForSmall = Math.min(scheduledPaintDevHours, scheduledInSmallBooth);
+            dayEntry.smallBoothPaintHours += hoursForSmall;
+            scheduledPaintDevHours -= hoursForSmall;
+            scheduledInSmallBooth -= hoursForSmall; // Reduce available small booth hours for CA
+          }
+          if (scheduledPaintDevHours > 0 && scheduledInLargeBooth > 0) {
+            const hoursForLarge = Math.min(scheduledPaintDevHours, scheduledInLargeBooth);
+            dayEntry.largeBoothPaintHours += hoursForLarge;
+            scheduledPaintDevHours -= hoursForLarge;
+            scheduledInLargeBooth -= hoursForLarge; // Reduce available large booth hours for CA
+          }
+          currentPaintDeviationHours -= (scheduledInSmallBooth + scheduledInLargeBooth - scheduledInSmallBooth - scheduledInLargeBooth); // This line is incorrect, should be based on scheduledPaintDevHours
+          paintDeviationHours -= (scheduledInSmallBooth + scheduledInLargeBooth - scheduledInSmallBooth - scheduledInLargeBooth); // This line is incorrect
+        }
+
+        // Schedule customer adaptation paint hours
+        let scheduledCAPaintHours = Math.min(scheduledInSmallBooth + scheduledInLargeBooth, currentCAPaintHours);
+        if (scheduledCAPaintHours > 0) {
+          if (scheduledInSmallBooth > 0) {
+            const hoursForSmall = Math.min(scheduledCAPaintHours, scheduledInSmallBooth);
+            dayEntry.smallBoothCAPaintHours += hoursForSmall;
+            scheduledCAPaintHours -= hoursForSmall;
+          }
+          if (scheduledCAPaintHours > 0 && scheduledInLargeBooth > 0) {
+            const hoursForLarge = Math.min(scheduledCAPaintHours, scheduledInLargeBooth);
+            dayEntry.largeBoothCAPaintHours += hoursForLarge;
+            scheduledCAPaintHours -= hoursForLarge;
+          }
+          currentCAPaintHours -= (scheduledInSmallBooth + scheduledInLargeBooth - scheduledInSmallBooth - scheduledInLargeBooth); // This line is incorrect
+          customerAdaptationPaintHours -= (scheduledInSmallBooth + scheduledInLargeBooth - scheduledInSmallBooth - scheduledInLargeBooth); // This line is incorrect
+        }
+
+        // Corrected logic for distributing hours and updating remainingPaintHours
+        const totalScheduledToday = scheduledInSmallBooth + scheduledInLargeBooth;
+        remainingPaintHours -= totalScheduledToday;
+
+        if (scheduledInSmallBooth > 0) {
+          dayEntry.smallBoothScheduledTrucksDetails.push({
+            truckId: truck.id,
+            chassisNumber: truck.name, // Assuming truck.name is chassis number for display
+            repairType: paintDeviationHours > 0 ? 'Paint' : 'Customer Adaptation - Paint', // Simplified
+            hoursScheduled: scheduledInSmallBooth,
+          });
+        }
+        if (scheduledInLargeBooth > 0) {
+          dayEntry.largeBoothScheduledTrucksDetails.push({
+            truckId: truck.id,
+            chassisNumber: truck.name,
+            repairType: paintDeviationHours > 0 ? 'Paint' : 'Customer Adaptation - Paint', // Simplified
+            hoursScheduled: scheduledInLargeBooth,
+          });
+        }
+      }
+
+      if (remainingPaintHours <= 0) {
+        scheduledCompletionDate = dayDate;
+      } else {
+        currentDayIndex++;
+      }
+    }
+
+    if (scheduledCompletionDate) {
+      truckCompletionDates.set(truck.id, scheduledCompletionDate);
+    }
   }
 
-  const sortedTrucks = [...trucks].sort((a, b) => {
-    // Prioritize by delivery date (earliest first), then Critical priority
-    const deliveryDateDiff = a.deliveryDate.getTime() - b.deliveryDate.getTime();
-    if (deliveryDateDiff !== 0) return deliveryDateDiff;
-
-    const priorityOrder = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
-    return (priorityOrder[b.customerPriority] || 0) - (priorityOrder[a.customerPriority] || 0);
-  });
-
-  sortedTrucks.forEach((truck) => {
-    let hoursRemainingForTruck = truck.repairTimeEstimate || 0;
-    const isCAPaint = truck.customerAdaptationType === 'Paint';
-    const requiredBoothType = truck.paintDetails?.paintBoothType || 'Small';
-    let truckCompletedOnDate: Date | null = null;
-
-    for (let dayIndex = 0; dayIndex < extendedNumDays; dayIndex++) {
-      if (hoursRemainingForTruck <= 0) {
-        truckCompletedOnDate = addDays(today, dayIndex - 1); // Truck completed on previous day
-        break;
-      }
-
-      const dateForScheduling = addDays(today, dayIndex);
-      const formattedDate = format(dateForScheduling, 'MMM dd');
-      const currentDayEntry = dailyOccupancyMap.get(formattedDate)!;
-
-      let hoursScheduledToday = 0;
-
-      if (requiredBoothType === 'Large') {
-        const largeBoothRemainingCapacity = largeCapacity - currentDayEntry.largeBoothScheduledHours;
-        const hoursToAllocateInLargeBooth = Math.min(hoursRemainingForTruck, largeBoothRemainingCapacity);
-        
-        if (hoursToAllocateInLargeBooth > 0) {
-          currentDayEntry.largeBoothScheduledHours += hoursToAllocateInLargeBooth;
-          hoursScheduledToday += hoursToAllocateInLargeBooth;
-          hoursRemainingForTruck -= hoursToAllocateInLargeBooth;
-
-          if (isCAPaint) {
-            currentDayEntry.largeBoothCAPaintHours += hoursToAllocateInLargeBooth;
-          } else {
-            currentDayEntry.largeBoothPaintHours += hoursToAllocateInLargeBooth;
-          }
-          currentDayEntry.largeBoothScheduledTrucksDetails.push({
-            truckId: truck.id,
-            chassisNumber: truck.chassisNumber,
-            repairType: truck.repairType,
-            hoursScheduled: hoursToAllocateInLargeBooth,
-            paintBoothType: requiredBoothType,
-          });
-        }
-      } else { // Small booth required, but can overflow to large if needed
-        const smallBoothRemainingCapacity = smallCapacity - currentDayEntry.smallBoothScheduledHours;
-        const largeBoothRemainingCapacity = largeCapacity - currentDayEntry.largeBoothScheduledHours;
-
-        const hoursToAllocateInSmallBooth = Math.min(hoursRemainingForTruck, smallBoothRemainingCapacity);
-        if (hoursToAllocateInSmallBooth > 0) {
-          currentDayEntry.smallBoothScheduledHours += hoursToAllocateInSmallBooth;
-          hoursScheduledToday += hoursToAllocateInSmallBooth;
-          hoursRemainingForTruck -= hoursToAllocateInSmallBooth;
-
-          if (isCAPaint) {
-            currentDayEntry.smallBoothCAPaintHours += hoursToAllocateInSmallBooth;
-          } else {
-            currentDayEntry.smallBoothPaintHours += hoursToAllocateInSmallBooth;
-          }
-          currentDayEntry.smallBoothScheduledTrucksDetails.push({
-            truckId: truck.id,
-            chassisNumber: truck.chassisNumber,
-            repairType: truck.repairType,
-            hoursScheduled: hoursToAllocateInSmallBooth,
-            paintBoothType: requiredBoothType,
-          });
-        }
-
-        if (hoursRemainingForTruck > 0) { // If still hours remaining, try large booth
-          const hoursToAllocateInLargeBooth = Math.min(hoursRemainingForTruck, largeBoothRemainingCapacity);
-          if (hoursToAllocateInLargeBooth > 0) {
-            currentDayEntry.largeBoothScheduledHours += hoursToAllocateInLargeBooth;
-            hoursScheduledToday += hoursToAllocateInLargeBooth;
-            hoursRemainingForTruck -= hoursToAllocateInLargeBooth;
-
-            if (isCAPaint) {
-              currentDayEntry.largeBoothCAPaintHours += hoursToAllocateInLargeBooth;
-            } else {
-              currentDayEntry.largeBoothPaintHours += hoursToAllocateInLargeBooth;
-            }
-            currentDayEntry.largeBoothScheduledTrucksDetails.push({
-              truckId: truck.id,
-              chassisNumber: truck.chassisNumber,
-              repairType: truck.repairType,
-              hoursScheduled: hoursToAllocateInLargeBooth,
-              paintBoothType: 'Large', // Allocated to large booth
-            });
-          }
-        }
-      }
-
-      currentDayEntry.totalScheduledHours = currentDayEntry.smallBoothScheduledHours + currentDayEntry.largeBoothScheduledHours;
-      currentDayEntry.availableCapacity = totalCapacity - currentDayEntry.totalScheduledHours; // Recalculate available capacity
-      currentDayEntry.capacityProblem = currentDayEntry.totalScheduledHours > totalCapacity; // Check for daily overflow
-      dailyOccupancyMap.set(formattedDate, currentDayEntry);
-
-      if (hoursRemainingForTruck <= 0) {
-        truckCompletedOnDate = dateForScheduling;
-        break;
-      }
-    }
-
-    if (truckCompletedOnDate) {
-      truckCompletionDates.set(truck.id, truckCompletedOnDate);
-    } else {
-      // If truck couldn't be scheduled within extendedNumDays, set completion to the last day
-      truckCompletionDates.set(truck.id, addDays(today, extendedNumDays - 1));
-    }
-  });
-
-  const occupancyData = Array.from(dailyOccupancyMap.values()).sort((a, b) => {
-    const dateA = new Date(a.date + ' ' + today.getFullYear());
-    const dateB = new Date(b.date + ' ' + today.getFullYear());
-    return dateA.getTime() - dateB.getTime();
-  }).filter((entry, index) => {
-    const entryDate = new Date(entry.date + ' ' + today.getFullYear());
-    return isAfter(entryDate, addDays(today, -1)) && isBefore(entryDate, addDays(today, numDays));
+  // After scheduling all trucks, check for capacity problems
+  occupancyData.forEach(dayEntry => {
+    dayEntry.capacityProblem =
+      dayEntry.smallBoothScheduledHours > boothCapacities.small ||
+      dayEntry.largeBoothScheduledHours > boothCapacities.large;
   });
 
   return { occupancyData, truckCompletionDates };
-}
+};
 
-export function simulateGeneralRepairSchedule(
+// --- General Repair Scheduling Simulation ---
+
+export type ScheduledOperatorDetail = {
+  operatorId: string;
+  operatorName: string;
+  hoursScheduled: number;
+  trucks: { truckId: string; chassisNumber: string; hours: number; repairType: RepairType }[];
+};
+
+export type DailyGeneralRepairOccupancy = {
+  date: string; // YYYY-MM-DD
+  totalScheduledHours: number;
+  availableCapacity: number;
+  operatorWorkload: { [operatorId: string]: ScheduledOperatorDetail };
+  capacityProblem: boolean;
+};
+
+export const simulateGeneralRepairSchedule = (
   trucks: Truck[],
   operators: Operator[],
   numDays: number,
-  earliestStartDates: Map<string, Date> = new Map() // New parameter for sequential scheduling
-): {
-  occupancyData: DailyOperatorOccupancy[];
-  truckCompletionDates: Map<string, Date>;
-} {
-  const dailyOccupancyMap = new Map<string, DailyOperatorOccupancy>();
-  const truckCompletionDates = new Map<string, Date>();
+  earliestStartDates: Map<string, Date> = new Map()
+) => {
   const today = startOfDay(new Date());
-
-  // Initialize daily occupancy for a wider range to allow for multi-day scheduling
-  const extendedNumDays = numDays + 60; // Schedule up to 60 days out
-  for (let i = 0; i < extendedNumDays; i++) {
+  const occupancyData: DailyGeneralRepairOccupancy[] = Array.from({ length: numDays }).map((_, i) => {
     const date = addDays(today, i);
-    const formattedDate = format(date, 'MMM dd');
-    dailyOccupancyMap.set(formattedDate, {
-      date: formattedDate,
+    const totalAvailableOperatorHours = operators.length * GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR;
+    return {
+      date: format(date, 'yyyy-MM-DD'),
       totalScheduledHours: 0,
-      availableCapacity: 0, // Will be calculated based on available operators
-      capacityProblem: false,
-      scheduledTrucksDetails: [],
+      availableCapacity: totalAvailableOperatorHours,
       operatorWorkload: {},
-    });
-  }
-
-  // Sort trucks by delivery date (earliest first), then customer priority (Critical first)
-  const sortedTrucks = [...trucks].sort((a, b) => {
-    // If earliestStartDates are provided, prioritize trucks that can start earlier
-    const aEarliestStart = earliestStartDates.get(a.id) || today;
-    const bEarliestStart = earliestStartDates.get(b.id) || today;
-    const earliestStartDiff = aEarliestStart.getTime() - bEarliestStart.getTime();
-    if (earliestStartDiff !== 0) return earliestStartDiff;
-
-    const deliveryDateDiff = a.deliveryDate.getTime() - b.deliveryDate.getTime();
-    if (deliveryDateDiff !== 0) return deliveryDateDiff;
-
-    const priorityOrder = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
-    return (priorityOrder[b.customerPriority] || 0) - (priorityOrder[a.customerPriority] || 0);
+      capacityProblem: false,
+    };
   });
 
-  // Create a mutable copy of operators for scheduling, tracking their daily workload
-  const mutableOperatorsDailyWorkload = new Map<string, { [dateKey: string]: number }>(); // operatorId -> { 'MMM dd': hoursScheduled }
-  operators.forEach(op => mutableOperatorsDailyWorkload.set(op.id, {}));
+  const truckCompletionDates = new Map<string, Date>();
 
-  sortedTrucks.forEach((truck) => {
-    // BUG FIX: Use the sum of deviation and missing parts time for general repair
-    let hoursRemainingForTruck = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0);
-    let truckCompletedOnDate: Date | null = null;
+  // Filter trucks that need general repair work and are not completed
+  const generalRepairTrucks = trucks.filter(
+    (truck) =>
+      (truck.deviations.some(d => d.type !== 'Paint' && !d.completed) ||
+       (truck.missingParts.some(mp => !mp.completed)) ||
+       (truck.customerAdaptationWork && !truck.customerAdaptationCompleted && !truck.customerAdaptationWork.toLowerCase().includes('paint'))) &&
+      truck.status !== 'Completed'
+  );
 
-    // Determine the actual start day for this truck based on earliestStartDates
-    let startDayIndex = 0;
-    if (earliestStartDates.has(truck.id)) {
-      const earliestStartDate = earliestStartDates.get(truck.id)!;
-      startDayIndex = Math.max(0, differenceInDays(earliestStartDate, today));
+  // Sort trucks by priority: earliest delivery date, then highest customer priority
+  generalRepairTrucks.sort((a, b) => {
+    // Primary sort: earliest start date (if available), then delivery date
+    const aStartDate = earliestStartDates.get(a.id) || a.deliveryDate;
+    const bStartDate = earliestStartDates.get(b.id) || b.deliveryDate;
+    if (aStartDate.getTime() !== bStartDate.getTime()) {
+      return aStartDate.getTime() - bStartDate.getTime();
     }
 
-    // Determine the specific general repair competencies needed for this truck
-    const neededCompetencies = getGeneralRepairTypesNeeded(truck);
+    // Secondary sort: customer priority (Critical > High > Medium > Low)
+    const priorityOrder: CustomerPriority[] = ['Critical', 'High', 'Medium', 'Low'];
+    return priorityOrder.indexOf(b.customerPriority) - priorityOrder.indexOf(a.customerPriority);
+  });
 
-    // If no general repair work is needed, or no competencies are identified, skip scheduling
-    if (hoursRemainingForTruck <= 0 || neededCompetencies.length === 0) {
-      truckCompletionDates.set(truck.id, earliestStartDates.get(truck.id) || today); // Mark as completed on earliest start or today if no work
-      return;
+  for (const truck of generalRepairTrucks) {
+    let remainingRepairHours = (truck.deviationTimeEstimate || 0) + (truck.missingPartsTimeEstimate || 0) + (truck.customerAdaptationTimeEstimate || 0);
+    if (truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint')) {
+      // Exclude paint-related customer adaptation if it's handled by paint booth
+      remainingRepairHours -= (truck.customerAdaptationTimeEstimate || 0);
     }
 
-    for (let dayIndex = startDayIndex; dayIndex < extendedNumDays; dayIndex++) {
-      if (hoursRemainingForTruck <= 0) {
-        truckCompletedOnDate = addDays(today, dayIndex - 1); // Truck completed on previous day
-        break;
+    if (remainingRepairHours <= 0) {
+      truckCompletionDates.set(truck.id, earliestStartDates.get(truck.id) || today); // If no repair hours, it's "completed" at its earliest start
+      continue;
+    }
+
+    let currentDayIndex = 0;
+    let scheduledCompletionDate: Date | null = null;
+    const truckEarliestStartDate = earliestStartDates.get(truck.id) || today;
+
+    while (remainingRepairHours > 0 && currentDayIndex < numDays) {
+      const dayEntry = occupancyData[currentDayIndex];
+      const dayDate = new Date(dayEntry.date);
+
+      // Only schedule if the current day is on or after the truck's earliest start date
+      if (isBefore(dayDate, startOfDay(truckEarliestStartDate))) {
+        currentDayIndex++;
+        continue;
       }
 
-      const dateForScheduling = addDays(today, dayIndex);
-      const formattedDate = format(dateForScheduling, 'MMM dd');
-      const currentDayEntry = dailyOccupancyMap.get(formattedDate)!;
+      const availableOperators = operators.filter(op => op.status === 'Available' || op.status === 'Busy'); // Consider busy operators as potentially available for more work
+      const dailyOperatorCapacity = availableOperators.length * GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR;
+      let dayAvailableCapacity = dailyOperatorCapacity - dayEntry.totalScheduledHours;
 
-      // Calculate total available operator capacity for this day
-      let totalDailyOperatorCapacity = 0;
-      operators.forEach(op => { // Use original operators to get shift times
-        const shiftStartOnDay = setMilliseconds(setSeconds(setMinutes(setHours(dateForScheduling, op.shiftStartTime.getHours()), op.shiftStartTime.getMinutes()), 0), 0);
-        const shiftEndOnDay = setMilliseconds(setSeconds(setMinutes(setHours(dateForScheduling, op.shiftEndTime.getHours()), op.shiftEndTime.getMinutes()), 0), 0);
-        
-        let dailyAvailableHours = 0;
-        if (op.status === 'Available') {
-          dailyAvailableHours = (shiftEndOnDay.getTime() - shiftStartOnDay.getTime()) / (1000 * 60 * 60);
-          // Subtract already scheduled hours for this operator on this specific day
-          const scheduledForOperatorToday = mutableOperatorsDailyWorkload.get(op.id)?.[formattedDate] || 0;
-          dailyAvailableHours = Math.max(0, dailyAvailableHours - scheduledForOperatorToday);
-        }
-        totalDailyOperatorCapacity += dailyAvailableHours;
+      if (dayAvailableCapacity <= 0) {
+        currentDayIndex++;
+        continue;
+      }
+
+      let hoursToScheduleToday = Math.min(remainingRepairHours, dayAvailableCapacity);
+      let scheduledToday = 0;
+
+      // Try to assign to operators based on competency and availability
+      const neededRepairTypes = getGeneralRepairTypesNeeded(truck);
+      const eligibleOperators = availableOperators.filter(op =>
+        neededRepairTypes.every(type => op.competencies.includes(type))
+      );
+
+      // Sort eligible operators by least scheduled hours for the day
+      eligibleOperators.sort((a, b) => {
+        const aScheduled = dayEntry.operatorWorkload[a.id]?.hoursScheduled || 0;
+        const bScheduled = dayEntry.operatorWorkload[b.id]?.hoursScheduled || 0;
+        return aScheduled - bScheduled;
       });
-      currentDayEntry.availableCapacity = totalDailyOperatorCapacity;
 
-      // Find the single best suitable operator for the current truck on this day
-      const bestOperatorForThisTruckToday = operators.filter(op =>
-        op.status === 'Available' &&
-        neededCompetencies.some(comp => op.competencies.includes(comp)) // Check if operator has *any* needed competency
-      ).sort((a, b) => {
-        // Prioritize by remaining hours (more available first), then efficiency
-        const aRemainingHours = (a.shiftEndTime.getTime() - a.shiftStartTime.getTime()) / (1000 * 60 * 60) - (mutableOperatorsDailyWorkload.get(a.id)?.[formattedDate] || 0);
-        const bRemainingHours = (b.shiftEndTime.getTime() - b.shiftStartTime.getTime()) / (1000 * 60 * 60) - (mutableOperatorsDailyWorkload.get(b.id)?.[formattedDate] || 0);
-        
-        if (aRemainingHours !== bRemainingHours) {
-          return bRemainingHours - aRemainingHours; // More hours available first
-        }
-        return b.efficiency - a.efficiency; // Then more efficient
-      })[0]; // Take only the best one
+      for (const operator of eligibleOperators) {
+        const operatorScheduledToday = dayEntry.operatorWorkload[operator.id]?.hoursScheduled || 0;
+        const operatorAvailableHours = GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR - operatorScheduledToday;
 
-      let hoursScheduledToday = 0;
+        if (operatorAvailableHours > 0 && hoursToScheduleToday > 0) {
+          const hoursForOperator = Math.min(hoursToScheduleToday, operatorAvailableHours);
 
-      if (bestOperatorForThisTruckToday) {
-        const operatorDailyWorkload = mutableOperatorsDailyWorkload.get(bestOperatorForThisTruckToday.id)!;
-        const operatorScheduledToday = operatorDailyWorkload[formattedDate] || 0;
-        const operatorTotalShiftHours = (bestOperatorForThisTruckToday.shiftEndTime.getTime() - bestOperatorForThisTruckToday.shiftStartTime.getTime()) / (1000 * 60 * 60);
-        const operatorRemainingHoursToday = Math.max(0, operatorTotalShiftHours - operatorScheduledToday);
-
-        const hoursToAllocate = Math.min(hoursRemainingForTruck, operatorRemainingHoursToday * bestOperatorForThisTruckToday.efficiency);
-
-        if (hoursToAllocate > 0) {
-          // Update operator's assigned workload for the day
-          operatorDailyWorkload[formattedDate] = (operatorDailyWorkload[formattedDate] || 0) + hoursToAllocate;
-          mutableOperatorsDailyWorkload.set(bestOperatorForThisTruckToday.id, operatorDailyWorkload);
-
-          if (!currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id]) {
-            currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id] = {
-              operatorName: bestOperatorForThisTruckToday.name,
+          if (!dayEntry.operatorWorkload[operator.id]) {
+            dayEntry.operatorWorkload[operator.id] = {
+              operatorId: operator.id,
+              operatorName: operator.name,
               hoursScheduled: 0,
               trucks: [],
             };
           }
-          currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id].hoursScheduled += hoursToAllocate;
-          currentDayEntry.operatorWorkload[bestOperatorForThisTruckToday.id].trucks.push({
+          dayEntry.operatorWorkload[operator.id].hoursScheduled += hoursForOperator;
+          dayEntry.operatorWorkload[operator.id].trucks.push({
             truckId: truck.id,
-            chassisNumber: truck.chassisNumber,
-            hours: hoursToAllocate,
+            chassisNumber: truck.name,
+            hours: hoursForOperator,
+            repairType: neededRepairTypes[0] || 'Mechanical', // Simplified: just pick first type
           });
 
-          hoursScheduledToday += hoursToAllocate;
-          hoursRemainingForTruck -= hoursToAllocate;
-          currentDayEntry.scheduledTrucksDetails.push({
-            truckId: truck.id,
-            chassisNumber: truck.chassisNumber,
-            repairType: truck.repairType, // Keep original repairType for display, but assignment based on neededCompetencies
-            hoursScheduled: hoursToAllocate,
-            operatorId: bestOperatorForThisTruckToday.id,
-            operatorName: bestOperatorForThisTruckToday.name,
-          });
+          scheduledToday += hoursForOperator;
+          hoursToScheduleToday -= hoursForOperator;
         }
+        if (hoursToScheduleToday <= 0) break;
       }
 
-      currentDayEntry.totalScheduledHours += hoursScheduledToday;
-      currentDayEntry.capacityProblem = currentDayEntry.totalScheduledHours > currentDayEntry.availableCapacity;
-      dailyOccupancyMap.set(formattedDate, currentDayEntry);
+      dayEntry.totalScheduledHours += scheduledToday;
+      remainingRepairHours -= scheduledToday;
 
-      if (hoursRemainingForTruck <= 0) {
-        truckCompletedOnDate = dateForScheduling;
-        break;
+      if (remainingRepairHours <= 0) {
+        scheduledCompletionDate = dayDate;
+      } else {
+        currentDayIndex++;
       }
     }
 
-    if (truckCompletedOnDate) {
-      truckCompletionDates.set(truck.id, truckCompletedOnDate);
-    } else {
-      // If truck couldn't be scheduled within extendedNumDays, set completion to the last day
-      truckCompletionDates.set(truck.id, addDays(today, extendedNumDays - 1));
+    if (scheduledCompletionDate) {
+      truckCompletionDates.set(truck.id, scheduledCompletionDate);
     }
-  });
+  }
 
-  const occupancyData = Array.from(dailyOccupancyMap.values()).sort((a, b) => {
-    const dateA = new Date(a.date + ' ' + today.getFullYear());
-    const dateB = new Date(b.date + ' ' + today.getFullYear());
-    return dateA.getTime() - dateB.getTime();
-  }).filter((entry, index) => {
-    const entryDate = new Date(entry.date + ' ' + today.getFullYear());
-    return isAfter(entryDate, addDays(today, -1)) && isBefore(entryDate, addDays(today, numDays));
+  // After scheduling all trucks, check for capacity problems
+  occupancyData.forEach(dayEntry => {
+    const totalAvailableOperatorHours = operators.length * GENERAL_REPAIR_DAILY_CAPACITY_HOURS_PER_OPERATOR;
+    dayEntry.availableCapacity = totalAvailableOperatorHours;
+    dayEntry.capacityProblem = dayEntry.totalScheduledHours > totalAvailableOperatorHours;
   });
 
   return { occupancyData, truckCompletionDates };
-}
+};

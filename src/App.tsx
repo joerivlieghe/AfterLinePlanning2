@@ -11,11 +11,13 @@ import AdminPage from './pages/AdminPage';
 import CustomerAdaptation from './pages/CustomerAdaptation';
 import PaintBoothOccupancy from './pages/PaintBoothOccupancy';
 import PlanningDashboard from './pages/PlanningDashboard';
-import TruckPlanningSummaryPage from './pages/TruckPlanningSummaryPage'; // Import the new page
+import TruckPlanningSummaryPage from './pages/TruckPlanningSummaryPage';
 
 const App: React.FC = () => {
+  console.log('App.tsx: App component is rendering.');
   return (
     <div className="flex flex-col min-h-screen">
+      {console.log('App.tsx: Rendering Header component.')}
       <Header />
       <main className="flex-grow">
         <Routes>
@@ -29,7 +31,7 @@ const App: React.FC = () => {
           <Route path="/customer-adaptation" element={<CustomerAdaptation />} />
           <Route path="/paint-booth-occupancy" element={<PaintBoothOccupancy />} />
           <Route path="/planning" element={<PlanningDashboard />} />
-          <Route path="/truck-planning-summary" element={<TruckPlanningSummaryPage />} /> {/* New route */}
+          <Route path="/truck-planning-summary" element={<TruckPlanningSummaryPage />} />
         </Routes>
       </main>
     </div>

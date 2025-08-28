@@ -19,7 +19,8 @@ const PaintBoothOccupancy: React.FC = () => {
     // Ensure trucks is an array before filtering to prevent errors if context is not yet loaded
     return (trucks || []).filter(
       (truck) =>
-        (truck.repairType === 'Paint' || truck.customerAdaptationType === 'Paint') &&
+        (truck.deviations.some(d => d.type === 'Paint' && !d.completed) ||
+         (truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint') && !truck.customerAdaptationCompleted)) &&
         truck.status !== 'Completed'
     );
   }, [trucks]);
@@ -288,10 +289,19 @@ const PaintBoothOccupancy: React.FC = () => {
                   <TableRow key={truck.id}>
                     <TableCell className="font-medium">
                       <Link to={`/trucks/${truck.id}`} className="text-blue-600 hover:underline">
-                        {truck.chassisNumber}
+                        {truck.name}
                       </Link>
                     </TableCell>
-                    <TableCell>{truck.repairType === 'Paint' ? 'Paint' : `CA - ${truck.customerAdaptationType}`}</TableCell>
+                    <TableCell>
+                      {truck.deviations.some(d => d.type === 'Paint' && !d.completed) && truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint') && !truck.customerAdaptationCompleted
+                        ? 'Paint & CA - Paint'
+                        : truck.deviations.some(d => d.type === 'Paint' && !d.completed)
+                          ? 'Paint'
+                          : truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint') && !truck.customerAdaptationCompleted
+                            ? 'CA - Paint'
+                            : 'N/A'
+                      }
+                    </TableCell>
                     <TableCell>{truck.repairTimeEstimate?.toFixed(1) || 'N/A'}</TableCell>
                     <TableCell>{format(truck.deliveryDate, 'MMM dd, yyyy')}</TableCell>
                     <TableCell>
@@ -303,7 +313,7 @@ const PaintBoothOccupancy: React.FC = () => {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={getPriorityColor(truck.customerPriority === 'Critical' ? 150 : truck.customerPriority === 'High' ? 100 : 50)}>
+                      <Badge className={getPriorityColor(truck)}>
                         {truck.customerPriority}
                       </Badge>
                     </TableCell>

@@ -11,30 +11,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { getPriorityColor, getSeverityColor, getMissingPartStatusColor, formatDate, getPriorityScore, getStatusColor, formatTime, getAvailableShiftHours, generateNextDays } from '@/lib/data';
 import { Deviation, MissingPart, Operator, RepairType, Shift } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon } from 'lucide-react';
+import { WrenchIcon, PackageIcon, CalendarIcon, InfoIcon, CarIcon, ArrowLeftIcon, ClockIcon, UserIcon, CheckCircleIcon, XCircleIcon, UserPlusIcon, FlagIcon, UsersIcon, BuildingIcon, GlobeIcon } from 'lucide-react';
 import { format, isToday, isTomorrow } from 'date-fns';
 
 const TruckDetail: React.FC = () => {
   const { truckId } = useParams<{ truckId: string }>();
   const navigate = useNavigate();
-  const { trucks, operators, markDeviationComplete, markMissingPartComplete, unassignOperatorFromTruck, assignOperatorToTruck, markTruckComplete, markCustomerAdaptationComplete } = useAppContext();
+  const { trucks, operators, markDeviationComplete, markMissingPartComplete, unassignOperatorFromTruck, assignOperatorToTruck, markTruckComplete, markCustomerAdaptationComplete, getCalculatedDueDate } = useAppContext();
   const { toast } = useToast();
 
+  // Calculate truck first. This useMemo is always called.
   const truck = useMemo(() => trucks.find((t) => t.id === truckId), [trucks, truckId]);
-  const assignedOperators = useMemo(() =>
-    truck?.assignedOperatorIds.map(opId => operators.find(op => op.id === opId)).filter(Boolean) as Operator[] || []
-  , [operators, truck]);
 
-  const [showCompletionConfirmation, setShowCompletionConfirmation] = useState(false);
-  const [itemToComplete, setItemToComplete] = useState<{ type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string } | null>(null);
-  const [selectedCompletingOperatorId, setSelectedCompletingOperatorId] = useState<string | null>(null);
-
-  const [showAssignOperatorDialog, setShowAssignOperatorDialog] = useState(false);
-  const [selectedPlanningDate, setSelectedPlanningDate] = useState<Date>(new Date());
-  const [selectedPlanningShift, setSelectedPlanningShift] = useState<Shift>('Early'); // New state for shift selection
-
-  const [showFinishTruckConfirmation, setShowFinishTruckConfirmation] = useState(false);
-
+  // Early return if truck is not found. This must come BEFORE any other hooks
+  // that would be conditionally skipped if truck is null.
   if (!truck) {
     return (
       <div className="p-6 text-center text-red-500">
@@ -44,102 +34,49 @@ const TruckDetail: React.FC = () => {
     );
   }
 
-  const priorityBreakdown = getPriorityScore(truck);
+  // All subsequent hooks will only be called if truck is not null.
+  // This ensures a consistent number of hooks are called for valid truck IDs.
 
-  const handleMarkComplete = (type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string) => {
-    if (assignedOperators.length === 0) {
-      toast({
-        title: "Action Blocked",
-        description: "Tasks cannot be marked complete without an assigned operator.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setItemToComplete({ type, id });
-    setSelectedCompletingOperatorId(null);
-    setShowCompletionConfirmation(true);
-  };
+  const assignedOperators = useMemo(() =>
+    truck.assignedOperatorIds.map(opId => operators.find(op => op.id === opId)).filter(Boolean) as Operator[]
+  , [operators, truck]);
 
-  const confirmCompletion = () => {
-    if (itemToComplete && selectedCompletingOperatorId) {
-      const completedByOperator = operators.find(op => op.id === selectedCompletingOperatorId);
-      const completedByName = completedByOperator ? completedByOperator.name : 'Unknown Operator';
+  const [showCompletionConfirmation, setShowCompletionConfirmation] = useState(false);
+  const [itemToComplete, setItemToComplete] = useState<{ type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string } | null>(null);
+  const [selectedCompletingOperatorId, setSelectedCompletingOperatorId] = useState<string | null>(null);
 
-      if (itemToComplete.type === 'deviation' && itemToComplete.id) {
-        const success = markDeviationComplete(truck.id, itemToComplete.id, completedByName);
-        if (!success) {
-          toast({
-            title: "Completion Failed",
-            description: "Could not mark deviation complete. Ensure an operator is assigned.",
-            variant: "destructive",
-          });
-        }
-      } else if (itemToComplete.type === 'missingPart' && itemToComplete.id) {
-        markMissingPartComplete(truck.id, itemToComplete.id, completedByName);
-      } else if (itemToComplete.type === 'customerAdaptation') {
-        markCustomerAdaptationComplete(truck.id, completedByName);
-      }
-      setShowCompletionConfirmation(false);
-      setItemToComplete(null);
-      setSelectedCompletingOperatorId(null);
-    } else {
-      toast({
-        title: "Selection Required",
-        description: "Please select an operator who completed the task.",
-        variant: "destructive",
-      });
-    }
-  };
+  const [showAssignOperatorDialog, setShowAssignOperatorDialog] = useState(false);
+  const [selectedPlanningDate, setSelectedPlanningDate] = useState<Date>(new Date());
+  const [selectedPlanningShift, setSelectedPlanningShift] = useState<Shift>('Early');
 
-  const handleUnassignOperator = (operatorId: string) => {
-    unassignOperatorFromTruck(truck.id, operatorId);
-    toast({
-      title: "Operator Unassigned",
-      description: `Operator ${operators.find(op => op.id === operatorId)?.name || 'Unknown'} unassigned from truck ${truck.chassisNumber}.`,
-      variant: "default",
-    });
-  };
-
-  const handleAssignSpecificOperator = (operatorId: string) => {
-    if (truck) {
-      assignOperatorToTruck(truck.id, operatorId);
-      toast({
-        title: "Operator Assigned",
-        description: `Operator ${operators.find(op => op.id === operatorId)?.name || 'Unknown'} assigned to truck ${truck.chassisNumber}.`,
-        variant: "default",
-      });
-      setShowAssignOperatorDialog(false);
-    }
-  };
-
-  const handleFinishTruck = () => {
-    setShowFinishTruckConfirmation(true);
-  };
-
-  const confirmFinishTruck = () => {
-    markTruckComplete(truck.id);
-    setShowFinishTruckConfirmation(false);
-    toast({
-      title: "Truck Completed",
-      description: `Truck ${truck.chassisNumber} has been marked as completed.`,
-    });
-    navigate('/');
-  };
+  const [showFinishTruckConfirmation, setShowFinishTruckConfirmation] = useState(false);
 
   const truckRequiredCompetencies = useMemo(() => {
     const competencies = new Set<RepairType>();
     if (truck.repairType) {
       competencies.add(truck.repairType);
     }
+    truck.deviations.forEach(dev => {
+      if (!dev.completed) {
+        competencies.add(dev.type);
+      }
+    });
+    truck.missingParts.forEach(mp => {
+      if (!mp.completed && mp.status === 'Available') {
+        competencies.add('Mechanical');
+      }
+    });
     if (truck.customerAdaptationWork && !truck.customerAdaptationCompleted) {
-      if (truck.customerAdaptationType === 'Mechanical') {
+      if (truck.customerAdaptationWork.toLowerCase().includes('mechanical')) {
         competencies.add('Customer Adaptation - Mechanical');
-      } else if (truck.customerAdaptationType === 'Paint') {
+      } else if (truck.customerAdaptationWork.toLowerCase().includes('paint')) {
         competencies.add('Customer Adaptation - Paint');
+      } else {
+        competencies.add('Customer Adaptation - Mechanical');
       }
     }
     return Array.from(competencies);
-  }, [truck.repairType, truck.customerAdaptationWork, truck.customerAdaptationCompleted, truck.customerAdaptationType]);
+  }, [truck]);
 
   const dayOptions = useMemo(() => {
     const next7Days = generateNextDays(7);
@@ -155,34 +92,36 @@ const TruckDetail: React.FC = () => {
   }, []);
 
   const availableOperators = useMemo(() => {
-    const actualPlanningDate = new Date(selectedPlanningDate); // Ensure it's a Date object
+    const actualPlanningDate = new Date(selectedPlanningDate);
 
     const filtered = operators.filter(op =>
       !truck.assignedOperatorIds.includes(op.id) &&
       (op.status === 'Available' || op.assignedTrucks.length === 0) &&
-      op.shift === selectedPlanningShift // Filter by selected shift
+      op.shift === selectedPlanningShift
     );
 
-    // Sort: Operators with required competency first, then by available hours (descending)
     filtered.sort((a, b) => {
       const aHasCompetency = truckRequiredCompetencies.some(requiredComp => a.competencies.includes(requiredComp));
       const bHasCompetency = truckRequiredCompetencies.some(requiredComp => b.competencies.includes(requiredComp));
 
-      if (aHasCompetency && !bHasCompetency) return -1; // a comes before b
-      if (!aHasCompetency && bHasCompetency) return 1;  // b comes before a
+      if (aHasCompetency && !bHasCompetency) return -1;
+      if (!aHasCompetency && bHasCompetency) return 1;
 
-      // If both have/don't have competency, sort by available hours
-      const aAvailableHours = getAvailableShiftHours(a, actualPlanningDate);
-      const bAvailableHours = getAvailableShiftHours(b, actualPlanningDate);
+      const aAvailableHours = getAvailableShiftHours(a);
+      const bAvailableHours = getAvailableShiftHours(b);
       return bAvailableHours - aAvailableHours;
     });
 
     return filtered;
-  }, [operators, truck.assignedOperatorIds, selectedPlanningDate, selectedPlanningShift, truckRequiredCompetencies]);
+  }, [operators, truck, selectedPlanningDate, selectedPlanningShift, truckRequiredCompetencies]);
 
+  // Non-hook calculations can be placed after the early return
+  const calculatedDueDate = getCalculatedDueDate(truck);
+  const priorityBreakdown = getPriorityScore(truck, calculatedDueDate); // Pass calculated due date
   const isTruckReadyForAssignment =
     truck.status !== 'Completed' &&
-    truck.status !== 'Missing Parts Not Available';
+    truck.status !== 'Not Ready' &&
+    truck.status !== 'Overdue - Not Ready';
 
   const allWorkCompleted = useMemo(() => {
     const allDeviationsCompleted = truck.deviations.every(dev => dev.completed);
@@ -191,20 +130,94 @@ const TruckDetail: React.FC = () => {
     return allDeviationsCompleted && allMissingPartsCompleted && customerAdaptationWorkCompleted;
   }, [truck]);
 
+  // Handlers
+  const handleMarkComplete = (type: 'deviation' | 'missingPart' | 'customerAdaptation', id?: string) => {
+    setItemToComplete({ type, id });
+    setSelectedCompletingOperatorId(null); // Reset selection
+    setShowCompletionConfirmation(true);
+  };
+
+  const confirmCompletion = () => {
+    if (!itemToComplete || !selectedCompletingOperatorId) {
+      toast({
+        title: "Error",
+        description: "Please select an operator to complete the task.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const operatorName = operators.find(op => op.id === selectedCompletingOperatorId)?.name || 'Unknown Operator';
+
+    if (itemToComplete.type === 'deviation' && itemToComplete.id) {
+      markDeviationComplete(truck.id, itemToComplete.id, operatorName);
+      toast({
+        title: "Deviation Completed",
+        description: `Deviation ${itemToComplete.id} marked as complete by ${operatorName}.`,
+      });
+    } else if (itemToComplete.type === 'missingPart' && itemToComplete.id) {
+      markMissingPartComplete(truck.id, itemToComplete.id, operatorName);
+      toast({
+        title: "Missing Part Installed",
+        description: `Missing part ${itemToComplete.id} marked as installed by ${operatorName}.`,
+      });
+    } else if (itemToComplete.type === 'customerAdaptation') {
+      markCustomerAdaptationComplete(truck.id, operatorName);
+      toast({
+        title: "Customer Adaptation Completed",
+        description: `Customer adaptation work marked as complete by ${operatorName}.`,
+      });
+    }
+    setShowCompletionConfirmation(false);
+    setItemToComplete(null);
+    setSelectedCompletingOperatorId(null);
+  };
+
+  const handleUnassignOperator = (operatorId: string) => {
+    unassignOperatorFromTruck(truck.id, operatorId);
+    toast({
+      title: "Operator Unassigned",
+      description: `Operator ${operators.find(op => op.id === operatorId)?.name || operatorId} unassigned from truck ${truck.name}.`,
+    });
+  };
+
+  const handleAssignSpecificOperator = (operatorId: string) => {
+    assignOperatorToTruck(truck.id, operatorId);
+    toast({
+      title: "Operator Assigned",
+      description: `Operator ${operators.find(op => op.id === operatorId)?.name} assigned to truck ${truck.name}.`,
+    });
+    setShowAssignOperatorDialog(false);
+  };
+
+  const handleFinishTruck = () => {
+    setShowFinishTruckConfirmation(true);
+  };
+
+  const confirmFinishTruck = () => {
+    markTruckComplete(truck.id);
+    toast({
+      title: "Truck Completed",
+      description: `Truck ${truck.name} has been marked as fully completed.`,
+    });
+    setShowFinishTruckConfirmation(false);
+    navigate('/'); // Navigate back to dashboard after completion
+  };
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <Button variant="outline" onClick={() => navigate('/')} className="mb-6 flex items-center">
         <ArrowLeftIcon className="mr-2 h-4 w-4" /> Back to Dashboard
       </Button>
 
-      <h1 className="text-4xl font-extrabold mb-6 text-gray-900">Truck Details: {truck.chassisNumber}</h1>
+      <h1 className="text-4xl font-extrabold mb-6 text-gray-900">Truck Details: {truck.name}</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Truck Overview */}
         <Card className="lg:col-span-2 bg-white shadow-lg rounded-lg p-6">
           <CardHeader className="p-0 pb-4">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-2xl font-semibold text-gray-800">{truck.chassisNumber}</CardTitle>
+              <CardTitle className="text-2xl font-semibold text-gray-800">{truck.name}</CardTitle>
               <Badge className={getStatusColor(truck.status)}>{truck.status}</Badge>
             </div>
             <CardDescription className="text-sm text-gray-600">ID: {truck.id}</CardDescription>
@@ -214,6 +227,14 @@ const TruckDetail: React.FC = () => {
               <div className="flex items-center text-base">
                 <CalendarIcon className="mr-2 h-5 w-5 text-muted-foreground" />
                 <span>Delivery Date: {formatDate(truck.deliveryDate)}</span>
+              </div>
+              <div className="flex items-center text-base">
+                <CalendarIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                <span>Invoice Date: {formatDate(truck.invoiceDate)}</span>
+              </div>
+              <div className="flex items-center text-base font-semibold">
+                <CalendarIcon className="mr-2 h-5 w-5 text-primary" />
+                <span>Calculated Due Date: {formatDate(calculatedDueDate)}</span>
               </div>
               <div className="flex items-center text-base">
                 <ClockIcon className="mr-2 h-5 w-5 text-muted-foreground" />
@@ -239,15 +260,15 @@ const TruckDetail: React.FC = () => {
               )}
               <div className="flex items-center text-base">
                 <WrenchIcon className="mr-2 h-5 w-5 text-muted-foreground" />
-                <span>Repair Type: {truck.repairType}</span>
+                <span>Model: {truck.model}</span>
               </div>
               <div className="flex items-center text-base">
                 <InfoIcon className="mr-2 h-5 w-5 text-muted-foreground" />
-                <span>Repair Area: {truck.repairAreaNeeded}</span>
+                <span>Year: {truck.year}</span>
               </div>
               <div className="flex items-center text-base">
                 <CarIcon className="mr-2 h-5 w-5 text-muted-foreground" />
-                <span>OK to Drive: {truck.okToDrive ? 'Yes' : 'No'}</span>
+                <span>Customer: {truck.customer}</span>
               </div>
               <div className="flex items-center text-base">
                 <UserIcon className="mr-2 h-5 w-5 text-muted-foreground" />
@@ -259,6 +280,10 @@ const TruckDetail: React.FC = () => {
                   <span>Project Code: <Badge variant="secondary">{truck.projectCode}</Badge></span>
                 </div>
               )}
+              <div className="flex items-center text-base">
+                <BuildingIcon className="mr-2 h-5 w-5 text-muted-foreground" />
+                <span>Market: {truck.market}</span>
+              </div>
             </div>
 
             {truck.customerAdaptationWork && (
@@ -267,16 +292,6 @@ const TruckDetail: React.FC = () => {
                   <WrenchIcon className="mr-2 h-4 w-4" /> Customer Adaptation Work:
                 </h3>
                 <p>{truck.customerAdaptationWork}</p>
-                {truck.customerAdaptationType && (
-                  <p className="text-sm text-purple-700 mt-1">
-                    Type: <b>{truck.customerAdaptationType}</b>
-                  </p>
-                )}
-                {truck.customerAdaptationType === 'Paint' && truck.paintDetails && (
-                  <p className="text-sm text-purple-700 mt-1">
-                    Paint Details: Color <b>{truck.paintDetails.color}</b>, Booth <b>{truck.paintDetails.paintBoothType}</b>
-                  </p>
-                )}
                 {truck.customerAdaptationTimeEstimate !== undefined && truck.customerAdaptationTimeEstimate > 0 && (
                   <p className="text-sm text-purple-700 mt-1">
                     Est. Time: {truck.customerAdaptationTimeEstimate} hrs
@@ -292,9 +307,9 @@ const TruckDetail: React.FC = () => {
                     <CheckCircleIcon className="mr-2 h-4 w-4" /> Mark Complete
                   </Button>
                 )}
-                {truck.customerAdaptationCompleted && (
+                {truck.customerAdaptationCompleted && truck.customerAdaptationCompletedAt && (
                   <p className="text-xs text-green-600 mt-1">
-                    Completed by {truck.customerAdaptationCompletedBy} on {formatDate(truck.customerAdaptationCompletedAt!)} {formatTime(truck.customerAdaptationCompletedAt!)}
+                    Completed by {truck.customerAdaptationCompletedBy} on {formatDate(truck.customerAdaptationCompletedAt)} {formatTime(truck.customerAdaptationCompletedAt)}
                   </p>
                 )}
               </div>
@@ -328,8 +343,8 @@ const TruckDetail: React.FC = () => {
                 className="mt-4 w-full"
                 onClick={() => {
                   setShowAssignOperatorDialog(true);
-                  setSelectedPlanningDate(new Date()); // Reset to today when opening
-                  setSelectedPlanningShift('Early'); // Reset to Early shift
+                  setSelectedPlanningDate(new Date());
+                  setSelectedPlanningShift('Early');
                 }}
               >
                 <UserPlusIcon className="mr-2 h-4 w-4" /> {assignedOperators.length > 0 ? 'Assign Another Operator' : 'Assign to Operator'}
@@ -360,13 +375,9 @@ const TruckDetail: React.FC = () => {
           <CardContent className="p-0 space-y-2 text-gray-700">
             <h3 className="font-semibold text-lg mb-2">Breakdown:</h3>
             <ul className="space-y-1">
-              <li>Customer Priority: <span className="font-medium">{priorityBreakdown.customerPriority}</span> pts</li>
-              <li>Delivery Date: <span className="font-medium">{priorityBreakdown.deliveryDate}</span> pts</li>
-              <li>Missing Parts Availability: <span className="font-medium">{priorityBreakdown.missingPartsAvailability}</span> pts</li>
-              <li>Deviations: <span className="font-medium">{priorityBreakdown.deviations}</span> pts</li>
-              <li>Customer Adaptation Work: <span className="font-medium">{priorityBreakdown.customerAdaptationWork}</span> pts</li>
-              <li>OK to Drive (Penalty): <span className="font-medium">{priorityBreakdown.okToDrive}</span> pts</li>
-              <li>Repair Time Estimate (Penalty): <span className="font-medium">{priorityBreakdown.repairTimeEstimatePenalty}</span> pts</li>
+              {priorityBreakdown.reasons.map((reason, index) => (
+                <li key={index}>{reason}</li>
+              ))}
             </ul>
           </CardContent>
         </Card>
@@ -396,9 +407,9 @@ const TruckDetail: React.FC = () => {
                             Est. Time: {dev.timeEstimate} hrs
                           </p>
                         )}
-                        {dev.completed && (
+                        {dev.completed && dev.completedAt && (
                           <p className="text-xs text-green-600 mt-1">
-                            Completed by {dev.completedBy} on {formatDate(dev.completedAt!)} {formatTime(dev.completedAt!)}
+                            Completed by {dev.completedBy} on {formatDate(dev.completedAt)} {formatTime(dev.completedAt)}
                           </p>
                         )}
                       </div>
@@ -451,12 +462,12 @@ const TruckDetail: React.FC = () => {
                         )}
                         {part.status !== 'Available' && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Est. Delivery: {formatDate(part.promisedDeliveryDate)}
+                            Est. Delivery: {formatDate(part.estimatedArrival)}
                           </p>
                         )}
-                        {part.completed && (
+                        {part.completed && part.completedAt && (
                           <p className="text-xs text-green-600 mt-1">
-                            Completed by {part.completedBy} on {formatDate(part.completedAt!)} {formatTime(part.completedAt!)}
+                            Completed by {part.completedBy} on {formatDate(part.completedAt)} {formatTime(part.completedAt)}
                           </p>
                         )}
                       </div>
@@ -578,7 +589,7 @@ const TruckDetail: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {availableOperators.map((op) => {
-                    const availableHours = getAvailableShiftHours(op, selectedPlanningDate);
+                    const availableHours = getAvailableShiftHours(op);
                     let hoursColorClass = 'text-gray-700';
                     if (availableHours >= 6) {
                       hoursColorClass = 'text-green-600 font-semibold';

@@ -5,6 +5,7 @@ export type MissingPartStatus = 'Ordered' | 'In Transit' | 'Available';
 export type OperatorStatus = 'Available' | 'Busy' | 'On Break' | 'Off Duty';
 export type Shift = 'Early' | 'Late';
 export type PaintBoothType = 'Small' | 'Large';
+export type Market = 'Germany' | 'France' | 'Spain' | 'Italy' | 'United Kingdom' | 'Sweden' | 'Norway' | 'Finland' | 'Denmark' | 'Netherlands' | 'Belgium' | 'Austria' | 'Switzerland' | 'Poland' | 'Czech Republic' | 'Portugal' | 'Ireland' | 'Greece';
 
 export interface Deviation {
   id: string;
@@ -49,10 +50,13 @@ export interface Truck {
   repairType: RepairType;
   repairAreaNeeded: RepairArea;
   deliveryDate: Date;
+  invoiceDate: Date; // New field for invoice date
   customerPriority: 'Low' | 'Medium' | 'High' | 'Critical';
   assignedOperatorIds: string[];
   status: TruckStatus;
   projectCode?: string;
+  customerDetails: string; // New field
+  market: Market; // New field, now specific European countries
 }
 
 export interface Operator {

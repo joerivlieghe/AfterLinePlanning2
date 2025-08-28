@@ -12,7 +12,7 @@ import { PlusCircleIcon, EditIcon, Trash2Icon, SaveIcon, XIcon, UserPlusIcon } f
 import { v4 as uuidv4 } from 'uuid';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-const allRepairTypes: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation'];
+const allRepairTypes: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint']; // Updated: Removed 'General'
 
 const OperatorCompetenciesTab: React.FC = () => {
   const { operators, addOperator, updateOperator, deleteOperator } = useAppContext();
@@ -50,7 +50,7 @@ const OperatorCompetenciesTab: React.FC = () => {
 
     if (currentOperator) {
       // Update existing operator
-      updateOperator(currentOperator.id, {
+      updateOperator(currentOperator.id, { // Corrected call to match new signature
         name: operatorName.trim(),
         competencies: operatorCompetencies,
       });
