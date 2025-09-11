@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { addDays, subDays, isPast, format, differenceInHours, startOfDay, endOfDay, isSameDay, isBefore, differenceInDays } from 'date-fns';
-import { Truck, Operator, RepairType, MissingPartStatus, Deviation, MissingPart, CustomerPriority, Market, MarketInvoiceDelta } from '@/types';
+import { Truck, Operator, RepairType, MissingPartStatus, Deviation, MissingPart, CustomerPriority, Market, MarketInvoiceDelta, TruckStatus } from '@/types';
 
 export const ALL_TRUCK_STATUSES_FOR_GENERATION = [
   'Ready to Plan',
@@ -14,9 +14,8 @@ export const ALL_TRUCK_STATUSES_FOR_GENERATION = [
   'Overdue - Partial',
   'Overdue - Ready to Finish',
   'Overdue - Not Ready',
+  'Ready for Delivery with Open Issues', // New status
 ] as const;
-
-export type TruckStatus = typeof ALL_TRUCK_STATUSES_FOR_GENERATION[number];
 
 export const ALL_REPAIR_TYPES: RepairType[] = ['Mechanical', 'Electrical', 'Software', 'Paint', 'Customer Adaptation - Mechanical', 'Customer Adaptation - Paint'];
 export const ALL_OPERATOR_STATUSES: Operator['status'][] = ['Available', 'Busy', 'On Break', 'Off Duty'];
@@ -146,8 +145,7 @@ export const generateTrucks = (count: number): Truck[] => {
     const hasPendingMissingPartsNotAvailable = missingParts.some(mp => mp.status !== 'Available' && !mp.completed);
     const hasUncompletedCustomerAdaptation = customerAdaptationWork && !customerAdaptationCompleted;
 
-    const hasAnyOpenWork = hasOpenDeviations || hasPendingMissingPartsNotAvailable || hasUncompletedCustomerAdaptation;
-    const allWorkCompleted = !hasAnyOpenWork;
+    const allWorkCompleted = !hasOpenDeviations && !hasPendingMissingPartsNotAvailable && !hasUncompletedCustomerAdaptation;
 
     let status: TruckStatus;
 
@@ -161,7 +159,12 @@ export const generateTrucks = (count: number): Truck[] => {
 
     // Apply overdue status if applicable
     const isOverdue = isPast(deliveryDate, today);
+    let readyForDeliveryWithOpenIssues = false;
+    let deliveryDecisionNotes: string | undefined = undefined;
+
     if (isOverdue && status !== 'Completed') {
+      // CRITICAL: Do NOT set 'Ready for Delivery with Open Issues' during initial generation.
+      // This status should only be set by user action.
       status = `Overdue - ${status}` as TruckStatus;
     }
 
@@ -195,6 +198,8 @@ export const generateTrucks = (count: number): Truck[] => {
       customerAdaptationCompleted,
       customerAdaptationCompletedBy,
       customerAdaptationCompletedAt,
+      readyForDeliveryWithOpenIssues, // This will always be false initially
+      deliveryDecisionNotes,
     });
   }
   return trucks;
@@ -341,6 +346,8 @@ export const getStatusColor = (status: TruckStatus): string => {
     case 'Overdue - Ready to Finish':
     case 'Overdue - Not Ready':
       return 'text-red-500';
+    case 'Ready for Delivery with Open Issues':
+      return 'text-amber-600'; // New color for this status
     default:
       return 'text-gray-500';
   }
@@ -430,12 +437,12 @@ export const getMissingPartStatusColor = (status: MissingPartStatus): string => 
   }
 };
 
-export const getSeverityColor = (severity: CustomerPriority): string => { // Changed to accept severity directly
+export const getSeverityColor = (severity: Deviation['severity']): string => { // Changed to accept severity directly
   switch (severity) {
-    case 'Critical':
-      return 'text-red-600'; // Critical
     case 'High':
+      return 'text-red-600'; // Critical
     case 'Medium':
+    case 'Critical': // Added Critical to High severity color
       return 'text-orange-600'; // High
     case 'Low':
       return 'text-green-600'; // Low
@@ -506,7 +513,8 @@ export const simulatePaintBoothSchedule = (
     (truck) =>
       (truck.deviations.some(d => d.type === 'Paint' && !d.completed) ||
        (truck.customerAdaptationWork && truck.customerAdaptationWork.toLowerCase().includes('paint') && !truck.customerAdaptationCompleted)) &&
-      truck.status !== 'Completed'
+      truck.status !== 'Completed' &&
+      truck.status !== 'Ready for Delivery with Open Issues' // Exclude trucks already flagged for delivery
   );
 
   // Sort trucks by priority: earliest delivery date, then highest customer priority
@@ -699,7 +707,8 @@ export const simulateGeneralRepairSchedule = (
       (truck.deviations.some(d => d.type !== 'Paint' && !d.completed) ||
        (truck.missingParts.some(mp => !mp.completed)) ||
        (truck.customerAdaptationWork && !truck.customerAdaptationCompleted && !truck.customerAdaptationWork.toLowerCase().includes('paint'))) &&
-      truck.status !== 'Completed'
+      truck.status !== 'Completed' &&
+      truck.status !== 'Ready for Delivery with Open Issues' // Exclude trucks already flagged for delivery
   );
 
   // Sort trucks by priority: earliest delivery date, then highest customer priority

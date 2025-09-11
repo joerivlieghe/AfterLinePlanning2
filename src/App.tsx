@@ -12,6 +12,7 @@ import CustomerAdaptation from './pages/CustomerAdaptation';
 import PaintBoothOccupancy from './pages/PaintBoothOccupancy';
 import PlanningDashboard from './pages/PlanningDashboard';
 import TruckPlanningSummaryPage from './pages/TruckPlanningSummaryPage';
+import OverdueTrucksReport from './pages/OverdueTrucksReport'; // Correct import path
 
 const App: React.FC = () => {
   console.log('App.tsx: App component is rendering.');
@@ -32,6 +33,7 @@ const App: React.FC = () => {
           <Route path="/paint-booth-occupancy" element={<PaintBoothOccupancy />} />
           <Route path="/planning" element={<PlanningDashboard />} />
           <Route path="/truck-planning-summary" element={<TruckPlanningSummaryPage />} />
+          <Route path="/overdue-trucks-report" element={<OverdueTrucksReport />} /> {/* New Route */}
         </Routes>
       </main>
     </div>

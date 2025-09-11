@@ -1,7 +1,7 @@
-export type TruckStatus = 'Pending' | 'In Progress' | 'Partial' | 'Completed' | 'Overdue' | 'Missing Parts Not Available' | 'Assigned' | 'Ready to Finish' | 'Overdue - Not Ready' | 'Not Ready' | 'Overdue - Ready to Plan' | 'Ready to Plan';
+export type TruckStatus = 'Pending' | 'In Progress' | 'Partial' | 'Completed' | 'Overdue' | 'Missing Parts Not Available' | 'Assigned' | 'Ready to Finish' | 'Overdue - Not Ready' | 'Not Ready' | 'Overdue - Ready to Plan' | 'Ready to Plan' | 'Ready for Delivery with Open Issues';
 export type RepairType = 'Mechanical' | 'Electrical' | 'Software' | 'Paint' | 'Customer Adaptation - Mechanical' | 'Customer Adaptation - Paint';
 export type RepairArea = 'Bay 1' | 'Bay 2' | 'Bay 3' | 'Bay 4' | 'Bay 5' | 'Bay 6';
-export type MissingPartStatus = 'Ordered' | 'In Transit' | 'Available';
+export type MissingPartStatus = 'Ordered' | 'In Transit' | 'Available' | 'Installed';
 export type OperatorStatus = 'Available' | 'Busy' | 'On Break' | 'Off Duty';
 export type Shift = 'Early' | 'Late';
 export type PaintBoothType = 'Small' | 'Large';
@@ -16,6 +16,7 @@ export interface Deviation {
   completedBy: string | null;
   completedAt: Date | null;
   timeEstimate?: number;
+  type: RepairType; // Added type to Deviation
 }
 
 export interface MissingPart {
@@ -63,6 +64,10 @@ export interface Truck {
   projectCode?: string;
   customerDetails?: string; // Made optional
   market: Market;
+  readyForDeliveryWithOpenIssues?: boolean; // New field
+  deliveryDecisionNotes?: string; // New field
+  priorityScore?: number; // Added for sorting
+  priorityReasons?: string[]; // Added for sorting
 }
 
 export interface Operator {

@@ -128,12 +128,13 @@ const PaintBoothOccupancy: React.FC = () => {
           <ChartContainer config={chartConfig} className="min-h-[300px] w-full">
             <BarChart accessibilityLayer data={occupancyData} barCategoryGap="20%"> {/* Increased gap between categories (days) */}
               <CartesianGrid vertical={true} strokeDasharray="3 3" /> {/* Added vertical dotted lines */}
+              {/* FIX: Removed year concatenation from tickFormatter and moved comment outside */}
               <XAxis
                 dataKey="date"
                 tickLine={false}
                 tickMargin={10}
                 axisLine={false}
-                tickFormatter={(value) => format(new Date(value + ' ' + new Date().getFullYear()), 'MMM dd')}
+                tickFormatter={(value) => format(new Date(value), 'MMM dd')}
               />
               <YAxis
                 tickLine={false}
@@ -278,7 +279,7 @@ const PaintBoothOccupancy: React.FC = () => {
                 
                 // Check for capacity problems specifically between the delivery date and estimated completion date
                 const isCapacityProblemOnCompletionPath = occupancyData.some(d => {
-                  const dayDate = new Date(d.date + ' ' + new Date().getFullYear());
+                  const dayDate = new Date(d.date); // Use new Date(d.date) directly
                   return d.capacityProblem && 
                          estimatedCompletionDate && 
                          isAfter(dayDate, addDays(truck.deliveryDate, -1)) && // Start checking from around delivery date

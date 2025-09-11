@@ -195,6 +195,11 @@ const Dashboard: React.FC = () => {
     [filteredTrucks, sortTrucks]
   );
 
+  const readyForDeliveryWithOpenIssuesTrucks = useMemo(() =>
+    sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Ready for Delivery with Open Issues')),
+    [filteredTrucks, sortTrucks]
+  );
+
   const completedTrucks = useMemo(() =>
     sortTrucks((Array.isArray(filteredTrucks) ? filteredTrucks : []).filter(truck => truck.status === 'Completed')),
     [filteredTrucks, sortTrucks]
@@ -298,7 +303,8 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     console.log('Partial Trucks Length:', partialTrucks.length);
     console.log('Ready to Finish Trucks Length:', readyToFinishTrucks.length);
-  }, [partialTrucks, readyToFinishTrucks]);
+    console.log('Ready for Delivery with Open Issues Trucks Length:', readyForDeliveryWithOpenIssuesTrucks.length);
+  }, [partialTrucks, readyToFinishTrucks, readyForDeliveryWithOpenIssuesTrucks]);
 
   // Debugging logs for filter states and available options
   useEffect(() => {
@@ -584,6 +590,24 @@ const Dashboard: React.FC = () => {
                 ))
               ) : (
                 <p className="text-muted-foreground text-center py-8 text-sm">No trucks ready to finish.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Ready for Delivery with Open Issues Column */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
+            <CheckCircleIcon className="mr-2 h-5 w-5 text-purple-600" /> Ready for Delivery ({readyForDeliveryWithOpenIssuesTrucks.length})
+          </h2>
+          <ScrollArea className="h-[calc(100vh-400px)] pr-4">
+            <div className="space-y-4">
+              {readyForDeliveryWithOpenIssuesTrucks.length > 0 ? (
+                readyForDeliveryWithOpenIssuesTrucks.map(truck => (
+                  <TruckCard key={truck.id} truck={truck} />
+                ))
+              ) : (
+                <p className="text-muted-foreground text-center py-8 text-sm">No trucks flagged for delivery with open issues.</p>
               )}
             </div>
           </ScrollArea>

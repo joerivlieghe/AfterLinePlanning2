@@ -32,11 +32,13 @@ interface AppContextType {
   useDeliveryDateForCalculations: boolean;
   setUseDeliveryDateForCalculations: (value: boolean) => void;
   getCalculatedDueDate: (truck: Truck) => Date;
+  markTruckReadyForDeliveryWithOpenIssues: (truckId: string, notes: string) => void; // New
+  overdueTrucksForReport: Truck[]; // New
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
   const [marketInvoiceDeltas, setMarketInvoiceDeltas] = useState<MarketInvoiceDelta[]>([]);
@@ -63,6 +65,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // New helper function to determine truck status based on its current state
   const determineTruckStatus = useCallback((truck: Truck): Truck['status'] => {
+    // If explicitly marked for delivery with open issues, this takes precedence
+    if (truck.readyForDeliveryWithOpenIssues) {
+      return 'Ready for Delivery with Open Issues';
+    }
+
     const isOverdue = isPast(getCalculatedDueDate(truck), new Date());
 
     const allDeviationsCompleted = truck.deviations.every(dev => dev.completed);
@@ -433,6 +440,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...truckToComplete,
           status: 'Completed', // Explicitly set to Completed
           assignedOperatorIds: [], // Unassign all operators
+          readyForDeliveryWithOpenIssues: false, // Reset this flag if completed
+          deliveryDecisionNotes: undefined, // Clear notes
         };
 
         setOperators(prevOperators => {
@@ -454,6 +463,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, []);
 
+  const markTruckReadyForDeliveryWithOpenIssues = useCallback((truckId: string, notes: string) => {
+    setTrucks(prevTrucks => prevTrucks.map(truck => {
+      if (truck.id === truckId) {
+        const updatedTruck = {
+          ...truck,
+          readyForDeliveryWithOpenIssues: true,
+          deliveryDecisionNotes: notes,
+          status: 'Ready for Delivery with Open Issues', // Explicitly set status
+        };
+        // No need to recalculate time estimates here, as work is still open
+        return updatedTruck;
+      }
+      return truck;
+    }));
+  }, []);
+
   const prioritizedTrucks = useMemo(() => {
     if (!Array.isArray(trucks)) {
       return [];
@@ -462,7 +487,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       truck.status !== 'Completed' && 
       truck.status !== 'Missing Parts Not Available' &&
       truck.status !== 'Not Ready' &&
-      truck.status !== 'Overdue - Not Ready'
+      truck.status !== 'Overdue - Not Ready' &&
+      truck.status !== 'Ready for Delivery with Open Issues' // Exclude trucks already flagged
     );
 
     return [...eligibleTrucks].sort((a, b) => {
@@ -471,6 +497,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return scoreB - scoreA;
     });
   }, [trucks, getCalculatedDueDate, useDeliveryDateForCalculations]);
+
+  const overdueTrucksForReport = useMemo(() => {
+    if (!Array.isArray(trucks)) {
+      return [];
+    }
+    const today = new Date();
+    return trucks.filter(truck => {
+      const calculatedDueDate = getCalculatedDueDate(truck);
+      const isOverdue = isPast(calculatedDueDate, today);
+      const hasOpenDeviations = truck.deviations.some(d => !d.completed);
+      const hasOpenMissingParts = truck.missingParts.some(mp => !mp.completed);
+      const hasOpenCustomerAdaptation = truck.customerAdaptationWork && !truck.customerAdaptationCompleted;
+
+      // Include trucks that are overdue AND have any open work (deviations, missing parts, customer adaptation)
+      // AND are not already marked as 'Completed' or 'Ready for Delivery with Open Issues'
+      return isOverdue &&
+             (hasOpenDeviations || hasOpenMissingParts || hasOpenCustomerAdaptation) &&
+             truck.status !== 'Completed' &&
+             truck.status !== 'Ready for Delivery with Open Issues';
+    }).sort((a, b) => {
+      // Sort by calculated due date (earliest first)
+      return getCalculatedDueDate(a).getTime() - getCalculatedDueDate(b).getTime();
+    });
+  }, [trucks, getCalculatedDueDate]);
 
   const contextValue = {
     trucks,
@@ -503,6 +553,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUseDeliveryDateForCalculations(value);
     }, []),
     getCalculatedDueDate,
+    markTruckReadyForDeliveryWithOpenIssues, // New
+    overdueTrucksForReport, // New
   };
 
   console.log('AppProvider: Providing context value.');
@@ -517,3 +569,5 @@ export const useAppContext = () => {
   }
   return context;
 };
+
+export default AppProvider;
